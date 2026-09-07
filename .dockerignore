@@ -1,0 +1,11 @@
+.venv/
+.git/
+__pycache__/
+*.pyc
+*.egg-info/
+*.pt
+*.onnx
+*.engine
+camera_smoke_test*.jpg
+.claude/
+.pytest_cache/

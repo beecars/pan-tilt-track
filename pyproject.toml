@@ -1,0 +1,25 @@
+[project]
+name = "pan-tilt-track"
+version = "0.1.0"
+description = "Pan/tilt visual tracking head: DYNAMIXEL control + YOLO-based tracking"
+requires-python = ">=3.10"
+dependencies = [
+    "dynamixel-sdk",
+    # >=8.4.0: needed for safe_globals registration under torch 2.6+'s
+    # weights_only=True default.
+    "ultralytics>=8.4.0",
+    # Used by ultralytics's ByteTrack tracker; not one of its own declared deps.
+    "lap>=0.5.12",
+    # <2: required by the GStreamer-enabled system OpenCV. >=1.23: ultralytics's floor.
+    "numpy>=1.23,<2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["pan_tilt_track*"]
