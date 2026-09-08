@@ -28,28 +28,38 @@ larger system (wide-angle camera, global tracking, identification).
 
 ```mermaid
 flowchart TD
-    CAM["<b>IMX477 camera</b><br/><small>nvarguscamerasrc, 1920x1080@30fps</small>"]
-    DET["<b>YoloDetector.track()</b><br/><small>YOLO26 + ByteTrack</small>"]
-    SEL["<b>select_target()</b><br/><small>closest-to-center, sticky on track ID</small>"]
-    ERR["<b>pixel error</b><br/><small>target point - frame center</small>"]
-    GAIN["<b>ProportionalGain (pan + tilt)</b><br/><small>kp * error, with deadband</small>"]
-    CTRL["<b>PanTiltController</b><br/><small>read position, clamp, sync-write goal</small>"]
-    U2D2["<b>U2D2 adapter</b><br/><small>/dev/ttyUSB0, TTL serial</small>"]
-    PAN["<b>XL330 pan servo (id=1)</b><br/><small>firmware position PID + profile vel/accel</small>"]
-    TILT["<b>XL330 tilt servo (id=2)</b><br/><small>firmware position PID + profile vel/accel</small>"]
-    RTSP["<b>RTSP server</b><br/><small>x264enc, optional</small>"]
+    CAM["IMX477 camera
+    nvarguscamerasrc, 1920x1080@30fps"]
+    DET["YoloDetector.track()
+    YOLO26 + ByteTrack"]
+    SEL["select_target()
+    closest-to-center, sticky on track ID"]
+    ERR["pixel error
+    target point - frame center"]
+    GAIN["ProportionalGain (pan + tilt)
+    kp * error, with deadband"]
+    CTRL["PanTiltController
+    read position, clamp, sync-write goal"]
+    U2D2["U2D2 adapter
+    /dev/ttyUSB0, TTL serial"]
+    PAN["XL330 pan servo (id=1)
+    firmware position PID + profile vel/accel"]
+    TILT["XL330 tilt servo (id=2)
+    firmware position PID + profile vel/accel"]
+    RTSP["RTSP server
+    x264enc, optional"]
 
-    CAM -- "<small>frame: ndarray (BGR)</small>" --> DET
-    DET -- "<small>list[Detection]</small>" --> SEL
-    SEL -- "<small>Detection | None</small>" --> ERR
-    ERR -- "<small>pixel_error_x/y: float</small>" --> GAIN
-    GAIN -- "<small>pan/tilt_delta: int (ticks)</small>" --> CTRL
-    CTRL -- "<small>goal_position: int (sync write)</small>" --> U2D2
-    U2D2 -- "<small>TTL serial packet</small>" --> PAN
-    U2D2 -- "<small>TTL serial packet</small>" --> TILT
-    PAN -. "<small>physically aims</small>" .-> CAM
-    TILT -. "<small>physically aims</small>" .-> CAM
-    CAM -. "<small>frame: ndarray (BGR)</small>" .-> RTSP
+    CAM -- "frame: ndarray (BGR)" --> DET
+    DET -- "list[Detection]" --> SEL
+    SEL -- "Detection | None" --> ERR
+    ERR -- "pixel_error_x/y: float" --> GAIN
+    GAIN -- "pan/tilt_delta: int (ticks)" --> CTRL
+    CTRL -- "goal_position: int (sync write)" --> U2D2
+    U2D2 -- "TTL serial packet" --> PAN
+    U2D2 -- "TTL serial packet" --> TILT
+    PAN -. "physically aims" .-> CAM
+    TILT -. "physically aims" .-> CAM
+    CAM -. "frame: ndarray (BGR)" .-> RTSP
 ```
 
 The servo firmware's position PID + Profile Velocity/Acceleration is the
