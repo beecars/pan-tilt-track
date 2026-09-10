@@ -1,12 +1,6 @@
-"""Thin wrapper around dynamixel_sdk for the two-servo pan/tilt head.
-
-Owns the port/packet handlers and the RAM writes (torque, profile
-velocity/acceleration, goal position). Deliberately does not implement any
-control law of its own -- the servo firmware's own position PID plus
-Profile Velocity/Acceleration are the only "controller" in the loop. See
-pan_tilt_track.control.gain for the outer (vision) loop that decides what
-goal positions to write.
-"""
+"""PanTiltController: dynamixel_sdk wrapper owning the port/packet
+handlers and RAM writes (torque, profile velocity/acceleration, goal
+position) for the two-servo pan/tilt head."""
 
 from __future__ import annotations
 
@@ -30,12 +24,6 @@ from .config import (
 logger = logging.getLogger(__name__)
 
 GOAL_POSITION_LEN = 4
-
-# Verified against hardware 2026-09-08: concurrent dual-camera capture +
-# CUDA YOLO inference intermittently starves the serial read/write timing
-# ("Incorrect status packet!") even though the same calls succeed 100% of
-# the time in isolation (see scripts/read_servo_config.py). Transient, not
-# a wiring fault -- worth a bounded retry instead of crashing the loop.
 COMM_MAX_ATTEMPTS = 3
 
 
@@ -52,7 +40,7 @@ class PanTiltController:
             self.port_handler, self.packet_handler, ADDR_GOAL_POSITION, GOAL_POSITION_LEN
         )
 
-    # -- lifecycle -----------------------------------------------------
+    # lifecycle
 
     def connect(self) -> None:
         if not self.port_handler.openPort():
@@ -75,7 +63,7 @@ class PanTiltController:
     def __exit__(self, *exc) -> None:
         self.close()
 
-    # -- low-level writes ------------------------------------------------
+    # low-level writes
 
     def _check(self, dxl_id: int | None, comm_result: int, error: int, what: str) -> None:
         id_label = dxl_id if dxl_id is not None else "pan+tilt"
@@ -94,7 +82,7 @@ class PanTiltController:
         before raising. `attempt_fn` takes no args and returns either
         `(result, error)` (writes) or `(value, result, error)` (reads);
         the leading value, if any, is returned on success. `dxl_id` is used
-        only for logging -- pass None for a multi-ID transaction (e.g. a
+        only for logging - pass None for a multi-ID transaction (e.g. a
         sync write) that has no single target and no per-ID error byte."""
         id_label = dxl_id if dxl_id is not None else "pan+tilt"
         for attempt in range(1, max_attempts + 1):
@@ -130,7 +118,7 @@ class PanTiltController:
         )
 
     def write_profile(self, dxl_id: int, velocity: int, acceleration: int) -> None:
-        # Firmware ignores acceleration while velocity reads 0 -- velocity
+        # Firmware ignores acceleration while velocity reads 0: velocity
         # must be written first.
         self._retry_comm(
             dxl_id, "write_profile_velocity", lambda: self.packet_handler.write4ByteTxRx(
@@ -167,20 +155,20 @@ class PanTiltController:
                 ]
                 if not self._sync_write_goal.addParam(dxl_id, param):
                     raise DynamixelWriteError(f"sync_write addParam failed for id={dxl_id}")
-            # No per-ID error byte for a sync write -- synthesize error=0 so
+            # No per-ID error byte for a sync write - synthesize error=0 so
             # _retry_comm's (result, error) contract still applies.
             return self._sync_write_goal.txPacket(), 0
 
         self._retry_comm(None, "sync_write_goal_positions", attempt)
 
-    # -- bring-up ---------------------------------------------------------
+    # bring-up
 
     def initialize(self) -> None:
         """Apply EEPROM guardrails + RAM profile, then enable torque.
 
         Velocity Limit lives in EEPROM, which the firmware refuses to write
         while torque is enabled ("Writing or Reading is not available to
-        target address!") -- so torque must be off first, even if a prior
+        target address!"), so torque must be off first, even if a prior
         run left it on.
         """
         for dxl_id, limits in (
@@ -195,7 +183,7 @@ class PanTiltController:
 
     def shutdown(self) -> None:
         """Disable torque on both joints. Each joint is attempted
-        independently -- a failure on one (even after retries) must not
+        independently: a failure on one (even after retries) must not
         prevent trying to disable the other."""
         errors = []
         for dxl_id in (self.config.pan_id, self.config.tilt_id):

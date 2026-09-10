@@ -1,11 +1,5 @@
-"""nvarguscamerasrc-backed CameraSource for the IMX477.
-
-ARGUS outputs NV12-family frames directly; nvvidconv+videoconvert convert
-to a BGR numpy array for OpenCV/YOLO.
-
-Whether the 1080p mode is a sensor crop or a downscale of the full
-4032x3040 sensor is unconfirmed -- affects the true field of view.
-"""
+"""nvarguscamerasrc-backed CameraSource for the IMX477: builds the
+GStreamer capture pipeline and converts frames to BGR numpy arrays."""
 
 from __future__ import annotations
 
@@ -23,10 +17,6 @@ def build_pipeline(
     framerate: int = 30,
     flip_method: int = 0,
 ) -> str:
-    """`flip_method` is the standard nvvidconv enum: 0=none, 1=90° CCW,
-    2=180°, 3=90° CW, 4=horizontal flip, 5=upper-left-diagonal flip,
-    6=vertical flip, 7=upper-right-diagonal flip. Runs on the VIC hardware
-    block, so it's free -- no extra CPU/GPU cost vs. flip_method=0."""
     return (
         f"nvarguscamerasrc sensor-id={sensor_id} ! "
         f"video/x-raw(memory:NVMM),width={capture_width},height={capture_height},"

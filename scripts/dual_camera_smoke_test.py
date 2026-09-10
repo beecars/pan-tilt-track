@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
-"""Dual-camera smoke test: confirm both IMX477 sensors can be captured
-concurrently via nvarguscamerasrc before wiring in detection/tracking.
-Captures a few frames from each and saves a side-by-side comparison image.
-
-Per-sensor id/orientation come from config/cameras.json (see
-pan_tilt_track.camera.config) -- physical mount properties, not runtime
-flags. Edit that file if the cameras are swapped or remounted.
-"""
+"""Dual-camera smoke test: captures frames from both cameras concurrently
+and saves a side-by-side comparison image."""
 
 import argparse
 import sys

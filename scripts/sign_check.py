@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
-"""Empirically verify the pan/tilt sign convention in run_tracker.py.
-
-Run with a person/object visible to the camera, moving side to side (pan)
-and up/down (tilt). Prints pixel error and goal position each frame.
-Correct sign: |pixel_error| trends toward 0. Wrong sign: it grows and the
-position marches toward its limit instead of centering the target.
-"""
+"""Verifies the pan/tilt kp sign convention used in run_tracker.py.
+Correct sign: pixel error trends toward 0; wrong sign: it grows toward
+the position limit."""
 
 import argparse
 import sys

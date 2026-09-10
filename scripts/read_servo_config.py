@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
-"""Read back the actual EEPROM/RAM values currently on both servos, so
-config.py can be populated with real numbers instead of placeholders.
-
-Read-only: does not write anything. Safe to run any time, torque on or off.
-"""
+"""Reads back current EEPROM/RAM values from both servos. Read-only,
+safe to run any time."""
 
 import sys
 

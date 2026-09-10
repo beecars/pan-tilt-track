@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
-"""Camera-only smoke test: confirm the nvarguscamerasrc pipeline works
-before wiring in detection. Captures a few frames and saves the last one.
-
-Sensor id/orientation come from config/cameras.json (see
-pan_tilt_track.camera.config) -- physical mount properties, not runtime
-flags. Edit that file if the cameras are swapped or remounted.
-"""
+"""Camera-only smoke test: captures a few frames from one camera (--role)
+and saves the last one."""
 
 import argparse
 import sys

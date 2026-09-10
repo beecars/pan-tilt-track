@@ -1,5 +1,2 @@
-"""Detection/tracking: import from `.detector` / `.target` directly.
-
-`.detector` requires ultralytics; kept out of this package's eager imports
-so lighter-weight modules elsewhere in the repo aren't forced to pull it in.
-"""
+"""Detection/tracking submodules: import from `.detector`, `.target`, or
+`.track_manager` directly; not re-exported here."""

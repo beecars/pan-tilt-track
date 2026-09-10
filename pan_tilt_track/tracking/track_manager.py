@@ -1,29 +1,5 @@
-"""Owns track identity/lifecycle state across frames -- split out from
-TrackingLoop and target.py's stateless selection policy so it has a home
-to grow into.
-
-Today this only remembers which track_id is "locked" (moved here verbatim
-from TrackingLoop._locked_track_id) so one camera's per-frame detections
-resolve to a single sticky target. This is the intended seam for two
-pieces of not-yet-written functionality, noted here so future work lands
-in the right place instead of getting grafted onto TrackingLoop or
-target.py:
-
-- ID/ReID: re-acquiring a lost track_id via appearance matching instead
-  of dropping lock the instant `track_id` disappears from one frame's
-  detections (ByteTrack's own IDs aren't stable across an occlusion).
-- Multi-camera / world-coordinate fusion: turning per-camera pixel-space
-  tracks into world-coordinate tracks for 3D reconstruction. That's a
-  distinct capability (needs camera calibration/pose, operates across
-  cameras) and will likely be a separate class that composes one
-  TrackManager per camera rather than a rewrite of this one -- this
-  class intentionally knows nothing about pixel-to-world geometry so it
-  doesn't have to be reworked when that lands.
-
-Neither exists yet. Don't add speculative ReID model loading or
-world-coordinate math here until there's a second camera or a 3D
-pipeline actually consuming it.
-"""
+"""TrackManager: maintains a sticky lock on one detection's track ID
+across frames."""
 
 from __future__ import annotations
 

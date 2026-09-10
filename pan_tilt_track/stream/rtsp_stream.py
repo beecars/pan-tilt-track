@@ -1,13 +1,5 @@
-"""Optional RTSP server for remote viewing of the camera feed.
-
-The IMX477/Argus stack allows exactly one capture session per camera, so
-this does not capture independently: push_frame() re-serves frames the
-tracking loop already pulled from the single GStreamerCameraSource
-capture, through an appsrc-based RTSP pipeline. No-op when no client is
-connected.
-
-Software H.264 encoder (x264enc) -- the Orin Nano has no hardware encoder
-(NVENC is Orin NX/AGX Orin only) -- so this competes with YOLO for CPU.
+"""RtspCameraServer: re-serves already-captured BGR frames over RTSP via
+an appsrc-based pipeline. Does not open its own camera capture session.
 
 Usage:
     server = RtspCameraServer(width=1920, height=1080, framerate=30)
@@ -59,6 +51,9 @@ class RtspCameraServer:
             "( appsrc name=source is-live=true block=true format=time "
             f"caps=video/x-raw,format=BGR,width={width},height={height},framerate={framerate}/1 ! "
             "videoconvert ! video/x-raw,format=I420 ! "
+            # Software encoder: the Orin Nano has no hardware encoder
+            # (NVENC is Orin NX/AGX Orin only), so this competes with YOLO
+            # for CPU.
             "x264enc tune=zerolatency speed-preset=ultrafast bitrate=4000 ! "
             "h264parse ! rtph264pay name=pay0 pt=96 )"
         )

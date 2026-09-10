@@ -1,6 +1,5 @@
-"""Picture-in-picture frame compositing: burn a smaller inset frame onto a
-larger main frame. Pure OpenCV/numpy logic, no camera or GStreamer
-dependency, so it's usable with any pair of same-shaped-dtype BGR frames."""
+"""Composites a smaller inset frame onto a larger main frame
+(picture-in-picture)."""
 
 from __future__ import annotations
 

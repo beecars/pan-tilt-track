@@ -1,15 +1,10 @@
 #!/usr/bin/env python3
-"""Stand-alone RTSP viewer -- just the camera feed, no servos/detection.
-Useful for checking framing/focus without paying the YOLO CPU cost.
-
-Owns the single Argus capture session itself and pushes each frame into
-RtspCameraServer directly, without a tracking loop in between.
-"""
+"""Stand-alone RTSP viewer for a single camera feed. No servos/detection."""
 
 import sys
 
 from pan_tilt_track.camera.gstreamer_source import GStreamerCameraSource
-from pan_tilt_track.camera.rtsp_stream import RtspCameraServer
+from pan_tilt_track.stream.rtsp_stream import RtspCameraServer
 
 
 def main() -> int:

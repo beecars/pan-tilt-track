@@ -1,5 +1,4 @@
-"""Minimal camera source interface, so the tracking loop doesn't care whether
-frames come from nvarguscamerasrc, a file, or (later) something else."""
+"""Structural interface for camera sources: read() and release()."""
 
 from __future__ import annotations
 

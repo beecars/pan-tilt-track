@@ -1,5 +1,4 @@
 {
-  "_comment": "Per-rig DYNAMIXEL bring-up values -- port/baudrate/IDs/limits change on reassembly or servo replacement, unlike the fixed control-table addresses in dynamixel/config.py.",
   "port": "/dev/ttyUSB0",
   "baudrate": 57600,
   "protocol_version": 2.0,

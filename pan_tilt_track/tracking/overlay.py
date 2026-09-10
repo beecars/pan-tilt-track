@@ -15,7 +15,7 @@ COLOR_CROSSHAIR = (0, 165, 255)
 COLOR_ERROR = (0, 0, 255)
 COLOR_TEXT = (255, 255, 255)
 
-# -- debug HUD palette, kept separate from the tracking-overlay colors above --
+# Debug HUD palette, kept separate from the tracking-overlay colors above.
 HUD_FONT = cv2.FONT_HERSHEY_SIMPLEX
 HUD_SCALE_HEAD = 0.5
 HUD_SCALE = 0.42
@@ -25,7 +25,7 @@ HUD_COLOR_HEAD = (255, 255, 255)
 HUD_COLOR_TEXT = (215, 215, 215)
 HUD_COLOR_DIM = (120, 120, 120)
 HUD_COLOR_WARN = (0, 165, 255)  # slowest detect-side stage this frame
-HUD_COLOR_ACCENT = (0, 220, 0)  # servo state -- echoes COLOR_TARGET
+HUD_COLOR_ACCENT = (0, 220, 0)  # servo state: echoes COLOR_TARGET
 
 
 def draw_tracking_overlay(
@@ -94,12 +94,12 @@ def _ms(value: float | None) -> str:
 def draw_debug_hud(frame, debug: dict) -> None:
     """Draws a per-frame timing/servo diagnostics panel in the top-right corner.
 
-    `debug` keys (all optional -- missing/None entries render as "--"):
+    `debug` keys (all optional; missing/None entries render as "--"):
     frame_interval_ms, preprocess_ms, nn_inference_ms, postprocess_ms,
     track_ms, detect_total_ms, draw_ms, servo_io_ms, track_id,
     num_detections, pan_position, tilt_position, pan_delta, tilt_delta.
 
-    track_ms is not from Ultralytics' own timers (see YoloDetector.track()) --
+    track_ms is not from Ultralytics' own timers (see YoloDetector.track()):
     it's the ByteTrack update + result-parsing overhead. The slowest
     detect-side stage each frame is highlighted as the bottleneck.
     """

@@ -1,8 +1,5 @@
-"""Physical camera characteristics and mount orientation, loaded from a JSON
-file on disk rather than hardcoded -- these are per-rig calibration facts
-(which physical sensor is which lens, how it's mounted) that change on
-reassembly, not fixed hardware specs. Same pattern the wide-camera handoff
-plan uses for the pixel->angle calibration file."""
+"""Loads and represents per-rig camera configuration: sensor id, capture
+mode, and mount orientation for the wide and telephoto roles."""
 
 from __future__ import annotations
 

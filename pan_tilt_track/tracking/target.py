@@ -1,5 +1,5 @@
-"""Target-selection policy, kept separate from the detector so it can evolve
-independently of the underlying model (e.g. add re-identification later)."""
+"""select_target(): picks a detection to track, preferring a previously
+locked track ID."""
 
 from __future__ import annotations
 

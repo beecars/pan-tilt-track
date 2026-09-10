@@ -1,15 +1,7 @@
-"""Thin wrapper around Ultralytics YOLO's built-in tracker.
-
-Uses model.track(..., persist=True) rather than a hand-rolled tracker, so
-ID association across frames comes from Ultralytics directly. Tracker is
-pinned explicitly to ByteTrack (see TRACKER_CONFIG) rather than left on
-Ultralytics' own default, which has changed across library versions --
-current default is tracktrack.yaml, not bytetrack.yaml.
-
-Works with either a detection model (boxes only) or a pose model (boxes +
-COCO keypoints) -- pass a `*-pose.pt` model_path to get keypoints, which
-lets the tracking loop target the head instead of the whole body.
-"""
+"""YoloDetector: thin wrapper around Ultralytics YOLO's track() with
+ByteTrack, returning a list of Detection objects. Accepts either a
+detection model (boxes only) or a `*-pose.pt` model (boxes + COCO
+keypoints)."""
 
 from __future__ import annotations
 
@@ -98,7 +90,7 @@ class YoloDetector:
         self.classes = classes
         # Per-call timing breakdown, set by track(). preprocess/nn_inference/
         # postprocess come from Ultralytics' own timers (result.speed),
-        # which stop before the ByteTrack update runs -- track_ms recovers
+        # which stop before the ByteTrack update runs; track_ms recovers
         # that as the remainder of the measured wall time.
         self.last_timing: dict[str, float] = {}
 

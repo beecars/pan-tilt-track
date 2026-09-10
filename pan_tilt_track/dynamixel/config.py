@@ -1,12 +1,6 @@
-"""Bring-up values and control-table addresses for the XL330 pan/tilt head.
-
-Per-rig bring-up facts (port, baudrate, servo IDs, joint limits/profile)
-are loaded from a JSON file on disk rather than hardcoded -- same pattern
-as pan_tilt_track.camera.config, since these change on reassembly or
-servo replacement. Control-table addresses and unit conversions below
-stay as Python constants: they're fixed X-series/XL330 hardware facts,
-not per-rig variables.
-"""
+"""Control-table addresses and per-rig servo configuration (port, IDs,
+joint limits/profile) for the XL330 pan/tilt head, the latter loaded from
+config/servos.json."""
 
 from __future__ import annotations
 
@@ -14,7 +8,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-# --- X-series (Protocol 2.0) control table addresses used here ---
+# X-series (Protocol 2.0) control table addresses used here:
 ADDR_TORQUE_ENABLE = 64        # 1 byte, RAM
 ADDR_POSITION_P_GAIN = 84      # 2 bytes, RAM
 ADDR_PROFILE_ACCELERATION = 108  # 4 bytes, RAM (resets to 0 on power-up)
@@ -45,6 +39,10 @@ class JointLimits:
     velocity_limit: int
     profile_velocity: int
     profile_acceleration: int
+
+
+def clamp_position(value: int, limits: JointLimits) -> int:
+    return max(limits.min_position, min(limits.max_position, value))
 
 
 @dataclass(frozen=True)

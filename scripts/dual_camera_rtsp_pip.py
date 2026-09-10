@@ -1,23 +1,14 @@
 #!/usr/bin/env python3
-"""Dual-IMX477 RTSP viewer: wide-camera feed full-frame with the
-telephoto/narrow camera composited as a picture-in-picture inset in the
-bottom-left corner. No servos/detection -- just the two camera feeds.
-
-Owns both Argus capture sessions directly and pushes each composited
-frame into a single RtspCameraServer, same pattern as scripts/rtsp_server.py.
-
-Per-sensor id/orientation come from config/cameras.json (see
-pan_tilt_track.camera.config) -- physical mount properties, not runtime
-flags. Edit that file if the cameras are swapped or remounted.
-"""
+"""Dual-camera RTSP viewer: wide-camera feed full-frame with telephoto
+composited as a picture-in-picture inset. No servos/detection."""
 
 import argparse
 import sys
 
 from pan_tilt_track.camera.config import DEFAULT_CAMERA_CONFIG_PATH, load_cameras_config
 from pan_tilt_track.camera.gstreamer_source import GStreamerCameraSource
-from pan_tilt_track.camera.pip_relay import PipRtspRelay
-from pan_tilt_track.camera.rtsp_stream import RtspCameraServer
+from pan_tilt_track.stream.pip_relay import PipRtspRelay
+from pan_tilt_track.stream.rtsp_stream import RtspCameraServer
 
 
 def main() -> int:

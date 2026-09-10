@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""One-time/per-boot bring-up: open the port, write EEPROM guardrails and
-RAM profile (velocity/acceleration reset every power-cycle), enable torque,
-and confirm both servos respond. Servo-only, no camera dependency."""
+"""One-time/per-boot servo bring-up: opens the port, writes EEPROM/RAM
+config, enables torque, and reads back both present positions."""
 
 import logging
 import sys

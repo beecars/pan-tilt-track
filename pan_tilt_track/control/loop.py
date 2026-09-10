@@ -8,6 +8,7 @@ import time
 from typing import Callable
 
 from ..camera.source import CameraSource
+from ..dynamixel.config import clamp_position
 from ..dynamixel.controller import PanTiltController
 from ..tracking.detector import YoloDetector
 from ..tracking.overlay import draw_debug_hud, draw_tracking_overlay
@@ -101,18 +102,14 @@ class TrackingLoop:
                 pan_position = self.controller.read_present_position(cfg.pan_id) + pan_delta
                 tilt_position = self.controller.read_present_position(cfg.tilt_id) + tilt_delta
 
-                pan_position = _clamp(
-                    pan_position, cfg.pan_limits.min_position, cfg.pan_limits.max_position
-                )
-                tilt_position = _clamp(
-                    tilt_position, cfg.tilt_limits.min_position, cfg.tilt_limits.max_position
-                )
+                pan_position = clamp_position(pan_position, cfg.pan_limits)
+                tilt_position = clamp_position(tilt_position, cfg.tilt_limits)
 
                 self.controller.sync_write_goal_positions(pan_position, tilt_position)
                 servo_io_ms = (time.perf_counter() - t0) * 1000
                 debug_pan_position, debug_tilt_position = pan_position, tilt_position
             elif self.draw_overlay:
-                # In the deadband -- no goal written, but read position for the HUD.
+                # In the deadband: no goal written, but read position for the HUD.
                 t0 = time.perf_counter()
                 debug_pan_position = self.controller.read_present_position(cfg.pan_id)
                 debug_tilt_position = self.controller.read_present_position(cfg.tilt_id)
@@ -192,7 +189,3 @@ class TrackingLoop:
     def run(self) -> None:
         while self.step():
             pass
-
-
-def _clamp(value: int, lo: int, hi: int) -> int:
-    return max(lo, min(hi, value))

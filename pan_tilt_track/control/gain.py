@@ -1,17 +1,14 @@
-"""Outer (vision) loop: pixel error -> servo goal-position delta.
-
-The XL330's own firmware PID (position control mode) and Profile
-Velocity/Acceleration already turn a goal-position write into smooth
-motion, so this module deliberately does NOT reimplement PID -- it only
-decides *what* goal position to ask for, via a proportional gain with a
-deadband to avoid hunting near the servo's angular resolution floor.
-"""
+"""ProportionalGain: computes a goal-position tick delta from pixel error,
+with a deadband."""
 
 from dataclasses import dataclass
 
 
 @dataclass
 class ProportionalGain:
+    # No integral/derivative term: the XL330's own firmware position PID
+    # and Profile Velocity/Acceleration already smooth a goal-position
+    # write into motion.
     kp: float
     deadband_px: float
 
