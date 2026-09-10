@@ -14,40 +14,53 @@ larger system (global tracking, identification).
 
 ## Hardware
 
-- **Compute**: Jetson Orin Nano Super Developer Kit
-  - L4T 36.5.0 / JetPack 6.2
-  - No hardware video encoder: optional RTSP feed uses software
-    encoding (`x264enc`), competes with YOLO for CPU
-- **Cameras**: 2x IMX477 CSI sensors, `nvarguscamerasrc`, 1920x1080@30fps
-  - **wide**: fixed/stationary, not mounted on the gimbal, broader FOV.
-    The only camera that ever decides where to swing the gimbal to
-    *acquire* a target. Mounted physically rotated 180° (corrected in
-    software via `flip_method`).
-  - **telephoto**: mounted on the pan/tilt bracket, narrow FOV. Runs its
-    own detection and fine self-correction once a target is in its
-    frame, and keeps tracking it even after it leaves wide's FOV; wide
-    is only consulted again once telephoto's own lock is lost.
-  - Which physical sensor is which role, and its mount orientation, is
-    per-rig calibration data in `config/cameras.json` (see
-    `pan_tilt_track/camera/config.py`), not hardcoded, since it changes
-    on reassembly. Re-verify after any physical remount.
-  - A separate per-rig calibration, `config/wide_handoff.json`, maps a
-    detected pixel location in wide's (fixed) frame to an absolute
-    pan/tilt goal position, necessary because wide isn't co-mounted
-    with the gimbal, so a pixel offset there doesn't relate to a servo
-    tick delta through a fixed gain the way telephoto's own offset does.
-    Produced empirically by `scripts/calibrate_wide_handoff.py`, not
-    hand-authored. See Usage below.
-- **Servos**: 2x ROBOTIS DYNAMIXEL XL330, Protocol 2.0
-  - Pan = ID 1, 490–3550 ticks (≈269°)
-  - Tilt = ID 2, 2048–3246 ticks (≈105°, one-sided from mechanical center)
-  - 57600 baud, driven directly: no external servo controller board
-  - Port/baudrate/IDs/joint limits are likewise per-rig config, in
-    `config/servos.json` (see `pan_tilt_track/dynamixel/config.py`)
-- **Servo interface**: ROBOTIS U2D2 USB-to-TTL adapter
-  - `/dev/ttyUSB0`
-- **Mechanical**: 2-DOF pan/tilt bracket
-  - Actuated directly by the two XL330s
+### Compute
+
+Jetson Orin Nano Super Developer Kit, L4T 36.5.0 / JetPack 6.2. No
+hardware video encoder: optional RTSP feed uses software encoding
+(`x264enc`), competing with YOLO for CPU.
+
+### Cameras
+
+2x IMX477 CSI sensors, `nvarguscamerasrc`, 1920x1080@30fps.
+
+| Role | Mount | Role in tracking |
+| --- | --- | --- |
+| **wide** | Fixed/stationary, rotated 180° (`flip_method`) | The only camera that ever decides where to swing the gimbal to *acquire* a target |
+| **telephoto** | On the pan/tilt bracket | Runs its own detection and fine self-correction once a target is in frame, and keeps tracking it even after it leaves wide's FOV; wide is only consulted again once telephoto's own lock is lost |
+
+Which physical sensor is which role, and its mount orientation, is
+per-rig calibration data in `config/cameras.json` (see
+`pan_tilt_track/camera/config.py`), not hardcoded, since it changes on
+reassembly. Re-verify after any physical remount.
+
+A separate per-rig calibration, `config/wide_handoff.json`, maps a
+detected pixel location in wide's (fixed) frame to an absolute pan/tilt
+goal position, necessary because wide isn't co-mounted with the gimbal,
+so a pixel offset there doesn't relate to a servo tick delta through a
+fixed gain the way telephoto's own offset does. Produced empirically by
+`scripts/calibrate_wide_handoff.py`, not hand-authored. See Usage below.
+
+### Servos
+
+2x ROBOTIS DYNAMIXEL XL330, Protocol 2.0, 57600 baud, driven directly
+(no external servo controller board).
+
+| Joint | ID | Range |
+| --- | --- | --- |
+| Pan | 1 | 490–3550 ticks (≈269°) |
+| Tilt | 2 | 2048–3246 ticks (≈105°, one-sided from mechanical center) |
+
+Port/baudrate/IDs/joint limits are likewise per-rig config, in
+`config/servos.json` (see `pan_tilt_track/dynamixel/config.py`).
+
+### Servo interface
+
+ROBOTIS U2D2 USB-to-TTL adapter, `/dev/ttyUSB0`.
+
+### Mechanical
+
+2-DOF pan/tilt bracket, actuated directly by the two XL330s.
 
 ## Block diagram
 
