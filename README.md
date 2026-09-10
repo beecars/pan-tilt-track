@@ -8,7 +8,9 @@ a telephoto camera mounted on the gimbal. See Architecture below.
 Standalone Python package, built to be pulled in as a submodule of a
 larger system (global tracking, identification).
 
-<img src="assets/hardware_diagram.gif" alt="Hardware walkthrough" width="480">
+<p align="center">
+  <img src="assets/hardware_diagram.gif" alt="Hardware walkthrough" width="480">
+</p>
 
 ## Hardware
 
@@ -53,7 +55,9 @@ Two-stage coarse-to-fine visual servo. Wide (fixed) only ever fires when
 telephoto currently has no lock; telephoto (on the gimbal) does its own
 fine tracking otherwise, including once the target has left wide's FOV.
 
-![Block diagram](assets/block_diagram.svg)
+<p align="center">
+  <img src="assets/block_diagram.svg" alt="Block diagram">
+</p>
 
 <sub>Source: `assets/block_diagram.mmd`. Regenerate after editing with `mermaid.ink` or `mmdc`.</sub>
 
