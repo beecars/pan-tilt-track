@@ -8,7 +8,7 @@ a telephoto camera mounted on the gimbal. See Architecture below.
 Standalone Python package, built to be pulled in as a submodule of a
 larger system (global tracking, identification).
 
-![Hardware walkthrough](assets/hardware_diagram.gif)
+<img src="assets/hardware_diagram.gif" alt="Hardware walkthrough" width="480">
 
 ## Hardware
 
