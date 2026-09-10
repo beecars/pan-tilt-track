@@ -35,5 +35,6 @@ docker run --rm -it \
     -v "$REPO_ROOT/pan_tilt_track:/app/pan_tilt_track" \
     -v "$REPO_ROOT/scripts:/app/scripts" \
     -v "$REPO_ROOT/tests:/app/tests" \
+    -v "$REPO_ROOT/config:/app/config" \
     "${WEIGHT_MOUNT[@]}" \
     pan-tilt-track "$@"

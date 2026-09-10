@@ -12,14 +12,10 @@ import sys
 
 from pan_tilt_track.camera.gstreamer_source import GStreamerCameraSource
 from pan_tilt_track.control.gain import ProportionalGain
+from pan_tilt_track.control.gains import DEADBAND_PX, PAN_KP, TILT_KP
 from pan_tilt_track.control.loop import TrackingLoop
-from pan_tilt_track.dynamixel import DynamixelConfig, PanTiltController
+from pan_tilt_track.dynamixel import DEFAULT_SERVO_CONFIG_PATH, PanTiltController, load_dynamixel_config
 from pan_tilt_track.tracking.detector import YoloDetector
-
-DEADBAND_PX = 6.0
-# Pan needs a negative kp on this mount -- positive drives it the wrong way.
-PAN_KP = -0.15
-TILT_KP = 0.15
 
 
 def print_step(info: dict) -> None:
@@ -39,10 +35,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target-mode", choices=["body", "head"], default="body")
     parser.add_argument("--model", default=None, help="default: yolo26n.pt, or yolo26n-pose.pt for --target-mode head")
+    parser.add_argument("--servo-config", default=DEFAULT_SERVO_CONFIG_PATH)
     args = parser.parse_args()
     model_path = args.model or ("yolo26n-pose.pt" if args.target_mode == "head" else "yolo26n.pt")
 
-    config = DynamixelConfig()
+    config = load_dynamixel_config(args.servo_config)
     with PanTiltController(config) as controller, GStreamerCameraSource() as camera:
         controller.initialize()
         detector = YoloDetector(model_path=model_path, classes=[0])  # class 0 = person in COCO

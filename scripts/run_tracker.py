@@ -5,24 +5,20 @@ correction. Pass --rtsp to also serve the raw feed for remote viewing."""
 import argparse
 import logging
 import sys
+from contextlib import ExitStack
 
+from pan_tilt_track.camera.config import DEFAULT_CAMERA_CONFIG_PATH, load_cameras_config
 from pan_tilt_track.camera.gstreamer_source import GStreamerCameraSource
+from pan_tilt_track.camera.pip_relay import PipRtspRelay
 from pan_tilt_track.camera.rtsp_stream import RtspCameraServer
 from pan_tilt_track.control.gain import ProportionalGain
+from pan_tilt_track.control.gains import DEADBAND_PX, PAN_KP, TILT_KP
 from pan_tilt_track.control.loop import TrackingLoop
-from pan_tilt_track.dynamixel import DynamixelConfig, PanTiltController
+from pan_tilt_track.dynamixel import DEFAULT_SERVO_CONFIG_PATH, PanTiltController, load_dynamixel_config
 from pan_tilt_track.tracking.detector import YoloDetector
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
-
-# Verified against real hardware with scripts/sign_check.py: pan needs a
-# NEGATIVE kp on this mount, tilt positive. Do not unify these into a
-# shared constant -- the sign difference is mount-specific, not a
-# copy-paste artifact.
-DEADBAND_PX = 6.0
-PAN_KP = -0.15
-TILT_KP = 0.15
 
 
 def main() -> int:
@@ -34,6 +30,15 @@ def main() -> int:
         action="store_true",
         help="burn detection boxes / crosshair / error vector into the RTSP feed (adds latency)",
     )
+    parser.add_argument("--camera-config", default=DEFAULT_CAMERA_CONFIG_PATH)
+    parser.add_argument("--servo-config", default=DEFAULT_SERVO_CONFIG_PATH)
+    parser.add_argument(
+        "--rtsp-pip",
+        action="store_true",
+        help="composite the wide camera as a picture-in-picture inset (bottom-left) into the RTSP feed; requires --rtsp",
+    )
+    parser.add_argument("--pip-scale", type=float, default=0.25, help="inset width as a fraction of main frame width")
+    parser.add_argument("--pip-margin", type=int, default=16)
     parser.add_argument("--model", default=None, help="default: yolo26n.pt, or yolo26n-pose.pt for --target-mode head")
     parser.add_argument("--classes", type=int, nargs="*", default=None)
     parser.add_argument(
@@ -46,12 +51,24 @@ def main() -> int:
         "--verbose", action="store_true", help="print per-frame pixel error / goal position"
     )
     args = parser.parse_args()
+    if args.rtsp_pip and not args.rtsp:
+        parser.error("--rtsp-pip requires --rtsp")
 
     model_path = args.model or ("yolo26n-pose.pt" if args.target_mode == "head" else "yolo26n.pt")
+    cameras = load_cameras_config(args.camera_config)
+    telephoto = cameras.telephoto
 
     rtsp_server = None
     if args.rtsp:
-        rtsp_server = RtspCameraServer(port=args.rtsp_port)
+        # The RTSP feed's dims are the wide camera's when compositing PIP
+        # (it's the background frame), otherwise the tracking camera's.
+        rtsp_dims = cameras.wide if args.rtsp_pip else telephoto
+        rtsp_server = RtspCameraServer(
+            width=rtsp_dims.capture_width,
+            height=rtsp_dims.capture_height,
+            framerate=rtsp_dims.framerate,
+            port=args.rtsp_port,
+        )
         rtsp_server.start()
 
     def on_step(info: dict) -> None:
@@ -66,8 +83,40 @@ def main() -> int:
                 f"goal=({info['pan_position']:5d}, {info['tilt_position']:5d})"
             )
 
-    config = DynamixelConfig()
-    with PanTiltController(config) as controller, GStreamerCameraSource() as camera:
+    config = load_dynamixel_config(args.servo_config)
+    with PanTiltController(config) as controller, ExitStack() as stack:
+        camera = stack.enter_context(
+            GStreamerCameraSource(
+                sensor_id=telephoto.sensor_id,
+                capture_width=telephoto.capture_width,
+                capture_height=telephoto.capture_height,
+                framerate=telephoto.framerate,
+                flip_method=telephoto.flip_method,
+            )
+        )
+        wide_camera = None
+        if args.rtsp_pip:
+            wide = cameras.wide
+            wide_camera = stack.enter_context(
+                GStreamerCameraSource(
+                    sensor_id=wide.sensor_id,
+                    capture_width=wide.capture_width,
+                    capture_height=wide.capture_height,
+                    framerate=wide.framerate,
+                    flip_method=wide.flip_method,
+                )
+            )
+
+        relay = PipRtspRelay(rtsp_server, scale=args.pip_scale, margin=args.pip_margin) if rtsp_server else None
+
+        def on_frame(frame) -> None:
+            main_frame, inset_frame = frame, None
+            if wide_camera is not None:
+                wide_frame = wide_camera.read()
+                if wide_frame is not None:
+                    main_frame, inset_frame = wide_frame, frame
+            relay.push(main_frame, inset_frame)
+
         controller.initialize()
         detector = YoloDetector(model_path=model_path, classes=args.classes)
         loop = TrackingLoop(
@@ -76,7 +125,7 @@ def main() -> int:
             controller=controller,
             pan_gain=ProportionalGain(kp=PAN_KP, deadband_px=DEADBAND_PX),
             tilt_gain=ProportionalGain(kp=TILT_KP, deadband_px=DEADBAND_PX),
-            on_frame=rtsp_server.push_frame if rtsp_server is not None else None,
+            on_frame=on_frame if rtsp_server is not None else None,
             on_step=on_step if args.verbose else None,
             target_mode=args.target_mode,
             draw_overlay=args.overlay,

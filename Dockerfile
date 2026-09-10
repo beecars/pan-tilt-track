@@ -84,6 +84,7 @@ RUN pip install --no-cache-dir -c /tmp/constraints.txt -e . && \
 
 COPY scripts ./scripts
 COPY tests ./tests
+COPY config ./config
 
 # scripts/run_tracker.py disables servo torque in a `finally` block on
 # KeyboardInterrupt (SIGINT); `docker stop`'s default SIGTERM would kill

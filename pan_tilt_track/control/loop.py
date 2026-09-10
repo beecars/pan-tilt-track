@@ -11,7 +11,7 @@ from ..camera.source import CameraSource
 from ..dynamixel.controller import PanTiltController
 from ..tracking.detector import YoloDetector
 from ..tracking.overlay import draw_debug_hud, draw_tracking_overlay
-from ..tracking.target import select_target
+from ..tracking.track_manager import TrackManager
 from .gain import ProportionalGain
 
 logger = logging.getLogger(__name__)
@@ -29,6 +29,7 @@ class TrackingLoop:
         on_frame: Callable[[object], None] | None = None,
         target_mode: str = "body",
         draw_overlay: bool = False,
+        track_manager: TrackManager | None = None,
     ):
         self.camera = camera
         self.detector = detector
@@ -45,7 +46,11 @@ class TrackingLoop:
         # Burns diagnostics into the frame before on_frame; adds one
         # inference's worth of latency, so off by default.
         self.draw_overlay = draw_overlay
-        self._locked_track_id: int | None = None
+        # Track identity/lifecycle (sticky lock today; see TrackManager's
+        # docstring for the ID/ReID and multi-camera fusion it's the seam
+        # for). Injectable so a future ReID-capable or multi-camera-aware
+        # manager can be swapped in without touching TrackingLoop again.
+        self.track_manager = track_manager or TrackManager(target_mode=target_mode)
         # Wall-clock timestamp of the previous step() call, used only to
         # compute the observed loop period for the debug HUD.
         self._last_step_time: float | None = None
@@ -71,8 +76,7 @@ class TrackingLoop:
         detections = self.detector.track(frame)
         detect_timing = self.detector.last_timing
 
-        target = select_target(detections, frame_center, self._locked_track_id, self.target_mode)
-        self._locked_track_id = target.track_id if target is not None else None
+        target = self.track_manager.update(detections, frame_center)
 
         # pan_position/tilt_position stay None unless a goal is actually
         # written this frame (on_step's "moved" signal). debug_pan_position/

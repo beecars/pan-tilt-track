@@ -1,6 +1,18 @@
-"""Bring-up values and control-table addresses for the XL330 pan/tilt head."""
+"""Bring-up values and control-table addresses for the XL330 pan/tilt head.
 
+Per-rig bring-up facts (port, baudrate, servo IDs, joint limits/profile)
+are loaded from a JSON file on disk rather than hardcoded -- same pattern
+as pan_tilt_track.camera.config, since these change on reassembly or
+servo replacement. Control-table addresses and unit conversions below
+stay as Python constants: they're fixed X-series/XL330 hardware facts,
+not per-rig variables.
+"""
+
+from __future__ import annotations
+
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 # --- X-series (Protocol 2.0) control table addresses used here ---
 ADDR_TORQUE_ENABLE = 64        # 1 byte, RAM
@@ -19,13 +31,11 @@ TORQUE_DISABLE = 0
 TICKS_PER_REV = 4096  # 0.088 deg/tick
 RPM_PER_VELOCITY_UNIT = 0.229  # XL330 Velocity Limit / Profile Velocity unit
 
+DEFAULT_SERVO_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "servos.json"
+
 
 def rpm_to_velocity_units(rpm: float) -> int:
     return round(rpm / RPM_PER_VELOCITY_UNIT)
-
-
-VELOCITY_CAP_RPM = 60
-VELOCITY_LIMIT_UNITS = rpm_to_velocity_units(VELOCITY_CAP_RPM)  # ~262 units
 
 
 @dataclass(frozen=True)
@@ -39,25 +49,38 @@ class JointLimits:
 
 @dataclass(frozen=True)
 class DynamixelConfig:
-    port: str = "/dev/ttyUSB0"
-    baudrate: int = 57600
+    port: str
+    baudrate: int
+    pan_id: int
+    tilt_id: int
+    pan_limits: JointLimits
+    tilt_limits: JointLimits
     protocol_version: float = 2.0
 
-    pan_id: int = 1
-    tilt_id: int = 2
 
-    pan_limits: JointLimits = JointLimits(
-        min_position=490,
-        max_position=3550,
-        velocity_limit=VELOCITY_LIMIT_UNITS,
-        profile_velocity=200,
-        profile_acceleration=30,
+def _joint_limits_from(joint: dict) -> JointLimits:
+    return JointLimits(
+        min_position=joint["min_position"],
+        max_position=joint["max_position"],
+        velocity_limit=rpm_to_velocity_units(joint["velocity_limit_rpm"]),
+        profile_velocity=joint["profile_velocity"],
+        profile_acceleration=joint["profile_acceleration"],
     )
 
-    tilt_limits: JointLimits = JointLimits(
-        min_position=2048,
-        max_position=3246,
-        velocity_limit=VELOCITY_LIMIT_UNITS,
-        profile_velocity=200,
-        profile_acceleration=30,
+
+def load_dynamixel_config(path: Path | str = DEFAULT_SERVO_CONFIG_PATH) -> DynamixelConfig:
+    path = Path(path)
+    data = json.loads(path.read_text())
+    try:
+        pan, tilt = data["pan"], data["tilt"]
+    except KeyError as e:
+        raise ValueError(f"{path}: missing required joint {e}") from e
+    return DynamixelConfig(
+        port=data["port"],
+        baudrate=data["baudrate"],
+        protocol_version=data.get("protocol_version", 2.0),
+        pan_id=pan["id"],
+        tilt_id=tilt["id"],
+        pan_limits=_joint_limits_from(pan),
+        tilt_limits=_joint_limits_from(tilt),
     )

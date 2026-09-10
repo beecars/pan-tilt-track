@@ -14,7 +14,7 @@ from pan_tilt_track.dynamixel.config import (
     ADDR_PROFILE_ACCELERATION,
     ADDR_PROFILE_VELOCITY,
     ADDR_VELOCITY_LIMIT,
-    DynamixelConfig,
+    load_dynamixel_config,
 )
 from pan_tilt_track.dynamixel.controller import PanTiltController
 
@@ -48,7 +48,7 @@ def dump(controller, dxl_id, name):
 
 
 def main() -> int:
-    config = DynamixelConfig()
+    config = load_dynamixel_config()
     controller = PanTiltController(config)
     try:
         controller.connect()

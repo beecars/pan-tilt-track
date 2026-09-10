@@ -1,0 +1,22 @@
+{
+  "_comment": "Per-rig DYNAMIXEL bring-up values -- port/baudrate/IDs/limits change on reassembly or servo replacement, unlike the fixed control-table addresses in dynamixel/config.py.",
+  "port": "/dev/ttyUSB0",
+  "baudrate": 57600,
+  "protocol_version": 2.0,
+  "pan": {
+    "id": 1,
+    "min_position": 490,
+    "max_position": 3550,
+    "velocity_limit_rpm": 60,
+    "profile_velocity": 200,
+    "profile_acceleration": 30
+  },
+  "tilt": {
+    "id": 2,
+    "min_position": 2048,
+    "max_position": 3246,
+    "velocity_limit_rpm": 60,
+    "profile_velocity": 200,
+    "profile_acceleration": 30
+  }
+}

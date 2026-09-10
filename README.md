@@ -120,6 +120,13 @@ opencv-python` if not. `numpy<2` is pinned for the same reason.
 YOLO runs CPU-only here unless you separately install a Jetson-native
 PyTorch build — see `Dockerfile`.
 
+## Model weights
+
+`yolo26n.pt` / `yolo26n-pose.pt` are gitignored (`*.pt`) and are never
+committed — place them at the repo root manually. `scripts/docker-run.sh`
+bind-mounts them into the container automatically if present there, so no
+rebuild is needed after adding or swapping a model file.
+
 ## One-time host setup
 
 ```bash

@@ -24,11 +24,19 @@ from .config import (
     TORQUE_DISABLE,
     TORQUE_ENABLE,
     DynamixelConfig,
+    load_dynamixel_config,
 )
 
 logger = logging.getLogger(__name__)
 
 GOAL_POSITION_LEN = 4
+
+# Verified against hardware 2026-09-08: concurrent dual-camera capture +
+# CUDA YOLO inference intermittently starves the serial read/write timing
+# ("Incorrect status packet!") even though the same calls succeed 100% of
+# the time in isolation (see scripts/read_servo_config.py). Transient, not
+# a wiring fault -- worth a bounded retry instead of crashing the loop.
+COMM_MAX_ATTEMPTS = 3
 
 
 class DynamixelWriteError(RuntimeError):
@@ -37,7 +45,7 @@ class DynamixelWriteError(RuntimeError):
 
 class PanTiltController:
     def __init__(self, config: DynamixelConfig | None = None):
-        self.config = config or DynamixelConfig()
+        self.config = config or load_dynamixel_config()
         self.port_handler = dxl.PortHandler(self.config.port)
         self.packet_handler = dxl.PacketHandler(self.config.protocol_version)
         self._sync_write_goal = dxl.GroupSyncWrite(
@@ -69,69 +77,101 @@ class PanTiltController:
 
     # -- low-level writes ------------------------------------------------
 
-    def _check(self, dxl_id: int, comm_result: int, error: int, what: str) -> None:
+    def _check(self, dxl_id: int | None, comm_result: int, error: int, what: str) -> None:
+        id_label = dxl_id if dxl_id is not None else "pan+tilt"
         if comm_result != dxl.COMM_SUCCESS:
             raise DynamixelWriteError(
-                f"{what} failed for id={dxl_id}: {self.packet_handler.getTxRxResult(comm_result)}"
+                f"{what} failed for id={id_label}: {self.packet_handler.getTxRxResult(comm_result)}"
             )
         if error != 0:
             raise DynamixelWriteError(
-                f"{what} reported hardware error for id={dxl_id}: "
+                f"{what} reported hardware error for id={id_label}: "
                 f"{self.packet_handler.getRxPacketError(error)}"
             )
 
+    def _retry_comm(self, dxl_id: int | None, what: str, attempt_fn, max_attempts: int = COMM_MAX_ATTEMPTS):
+        """Retries a single Dynamixel transaction up to `max_attempts` times
+        before raising. `attempt_fn` takes no args and returns either
+        `(result, error)` (writes) or `(value, result, error)` (reads);
+        the leading value, if any, is returned on success. `dxl_id` is used
+        only for logging -- pass None for a multi-ID transaction (e.g. a
+        sync write) that has no single target and no per-ID error byte."""
+        id_label = dxl_id if dxl_id is not None else "pan+tilt"
+        for attempt in range(1, max_attempts + 1):
+            *value, result, error = attempt_fn()
+            if result == dxl.COMM_SUCCESS and error == 0:
+                return value[0] if value else None
+            if attempt < max_attempts:
+                logger.warning(
+                    "%s transient failure for id=%s (attempt %d/%d): %s",
+                    what,
+                    id_label,
+                    attempt,
+                    max_attempts,
+                    self.packet_handler.getTxRxResult(result)
+                    if result != dxl.COMM_SUCCESS
+                    else self.packet_handler.getRxPacketError(error),
+                )
+        self._check(dxl_id, result, error, what)
+
     def set_torque(self, dxl_id: int, enabled: bool) -> None:
         value = TORQUE_ENABLE if enabled else TORQUE_DISABLE
-        result, error = self.packet_handler.write1ByteTxRx(
-            self.port_handler, dxl_id, ADDR_TORQUE_ENABLE, value
+        self._retry_comm(
+            dxl_id, "set_torque", lambda: self.packet_handler.write1ByteTxRx(
+                self.port_handler, dxl_id, ADDR_TORQUE_ENABLE, value
+            )
         )
-        self._check(dxl_id, result, error, "set_torque")
 
     def write_velocity_limit(self, dxl_id: int, ticks_per_s: int) -> None:
-        result, error = self.packet_handler.write4ByteTxRx(
-            self.port_handler, dxl_id, ADDR_VELOCITY_LIMIT, ticks_per_s
+        self._retry_comm(
+            dxl_id, "write_velocity_limit", lambda: self.packet_handler.write4ByteTxRx(
+                self.port_handler, dxl_id, ADDR_VELOCITY_LIMIT, ticks_per_s
+            )
         )
-        self._check(dxl_id, result, error, "write_velocity_limit")
 
     def write_profile(self, dxl_id: int, velocity: int, acceleration: int) -> None:
         # Firmware ignores acceleration while velocity reads 0 -- velocity
         # must be written first.
-        result, error = self.packet_handler.write4ByteTxRx(
-            self.port_handler, dxl_id, ADDR_PROFILE_VELOCITY, velocity
+        self._retry_comm(
+            dxl_id, "write_profile_velocity", lambda: self.packet_handler.write4ByteTxRx(
+                self.port_handler, dxl_id, ADDR_PROFILE_VELOCITY, velocity
+            )
         )
-        self._check(dxl_id, result, error, "write_profile_velocity")
-        result, error = self.packet_handler.write4ByteTxRx(
-            self.port_handler, dxl_id, ADDR_PROFILE_ACCELERATION, acceleration
+        self._retry_comm(
+            dxl_id, "write_profile_acceleration", lambda: self.packet_handler.write4ByteTxRx(
+                self.port_handler, dxl_id, ADDR_PROFILE_ACCELERATION, acceleration
+            )
         )
-        self._check(dxl_id, result, error, "write_profile_acceleration")
 
     def read_present_position(self, dxl_id: int) -> int:
-        position, result, error = self.packet_handler.read4ByteTxRx(
-            self.port_handler, dxl_id, ADDR_PRESENT_POSITION
+        return self._retry_comm(
+            dxl_id, "read_present_position", lambda: self.packet_handler.read4ByteTxRx(
+                self.port_handler, dxl_id, ADDR_PRESENT_POSITION
+            )
         )
-        self._check(dxl_id, result, error, "read_present_position")
-        return position
 
     def sync_write_goal_positions(self, pan_position: int, tilt_position: int) -> None:
         """Write both goal positions in a single bus transaction."""
-        self._sync_write_goal.clearParam()
-        for dxl_id, position in (
-            (self.config.pan_id, pan_position),
-            (self.config.tilt_id, tilt_position),
-        ):
-            param = [
-                dxl.DXL_LOBYTE(dxl.DXL_LOWORD(position)),
-                dxl.DXL_HIBYTE(dxl.DXL_LOWORD(position)),
-                dxl.DXL_LOBYTE(dxl.DXL_HIWORD(position)),
-                dxl.DXL_HIBYTE(dxl.DXL_HIWORD(position)),
-            ]
-            if not self._sync_write_goal.addParam(dxl_id, param):
-                raise DynamixelWriteError(f"sync_write addParam failed for id={dxl_id}")
-        result = self._sync_write_goal.txPacket()
-        if result != dxl.COMM_SUCCESS:
-            raise DynamixelWriteError(
-                f"sync_write_goal_positions failed: {self.packet_handler.getTxRxResult(result)}"
-            )
+
+        def attempt():
+            self._sync_write_goal.clearParam()
+            for dxl_id, position in (
+                (self.config.pan_id, pan_position),
+                (self.config.tilt_id, tilt_position),
+            ):
+                param = [
+                    dxl.DXL_LOBYTE(dxl.DXL_LOWORD(position)),
+                    dxl.DXL_HIBYTE(dxl.DXL_LOWORD(position)),
+                    dxl.DXL_LOBYTE(dxl.DXL_HIWORD(position)),
+                    dxl.DXL_HIBYTE(dxl.DXL_HIWORD(position)),
+                ]
+                if not self._sync_write_goal.addParam(dxl_id, param):
+                    raise DynamixelWriteError(f"sync_write addParam failed for id={dxl_id}")
+            # No per-ID error byte for a sync write -- synthesize error=0 so
+            # _retry_comm's (result, error) contract still applies.
+            return self._sync_write_goal.txPacket(), 0
+
+        self._retry_comm(None, "sync_write_goal_positions", attempt)
 
     # -- bring-up ---------------------------------------------------------
 
@@ -154,5 +194,15 @@ class PanTiltController:
         logger.info("Pan/tilt controller initialized")
 
     def shutdown(self) -> None:
+        """Disable torque on both joints. Each joint is attempted
+        independently -- a failure on one (even after retries) must not
+        prevent trying to disable the other."""
+        errors = []
         for dxl_id in (self.config.pan_id, self.config.tilt_id):
-            self.set_torque(dxl_id, enabled=False)
+            try:
+                self.set_torque(dxl_id, enabled=False)
+            except DynamixelWriteError as e:
+                logger.error("Failed to disable torque for id=%d: %s", dxl_id, e)
+                errors.append(e)
+        if errors:
+            raise DynamixelWriteError(f"shutdown incomplete: {len(errors)} joint(s) failed to disable torque")

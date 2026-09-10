@@ -1,0 +1,17 @@
+{
+  "_comment": "Per-rig IMX477 sensor assignment and mount orientation. Verified against hardware 2026-09-08. Re-check after any physical remount (same category as scripts/sign_check.py).",
+  "wide": {
+    "sensor_id": 1,
+    "capture_width": 1920,
+    "capture_height": 1080,
+    "framerate": 30,
+    "flip_method": 2
+  },
+  "telephoto": {
+    "sensor_id": 0,
+    "capture_width": 1920,
+    "capture_height": 1080,
+    "framerate": 30,
+    "flip_method": 0
+  }
+}
