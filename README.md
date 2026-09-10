@@ -9,7 +9,7 @@ Standalone Python package, built to be pulled in as a submodule of a
 larger system (global tracking, identification).
 
 <p align="center">
-  <img src="assets/hardware_diagram.gif" alt="Hardware walkthrough" width="480">
+  <img src="assets/hardware_diagram.webp" alt="Hardware walkthrough" width="480">
 </p>
 
 ## Hardware
