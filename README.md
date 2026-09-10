@@ -69,38 +69,35 @@ true multi-camera/world-coordinate fusion, neither built yet.
 
 ## Architecture
 
-- `dynamixel/`: servo control (`dynamixel_sdk` wrapper); torque enable,
-  EEPROM/RAM writes, sync-write goal positions. No control law of its
-  own. Per-rig bring-up values (port, IDs, joint limits) load from
-  `config/servos.json` via `load_dynamixel_config()`.
-- `tracking/`: YOLO26 `track()` wrapper, pinned to ByteTrack
-  (`tracker="bytetrack.yaml"`); `target.py`'s stateless `select_target()`
-  policy (closest-to-center); and `TrackManager`, which owns the
-  frame-to-frame sticky lock on top of it. Wide and telephoto each run
-  their own `YoloDetector`/`TrackManager` instance with independent
-  track-ID spaces (their ByteTrack instances are never correlated).
-  `TrackManager` is also the intended seam for future ID/ReID
-  (re-acquiring a lost track by appearance) and true multi-camera/
-  world-coordinate fusion, neither implemented yet. `--target-mode
-  {body,head}` selects bbox center or head-keypoint centroid (head falls
-  back to body center per-frame when keypoints aren't visible) for both
-  cameras uniformly.
-- `control/`: telephoto's fine-tracking loop (`loop.py`'s
-  `TrackingLoop`, unchanged regardless of the wide-handoff stage):
-  `gain.py`'s `ProportionalGain` (pixel error to goal-position delta with
-  a deadband, deliberately not a full PID) and `gains.py`'s tuned
-  `PAN_KP`/`TILT_KP`/`DEADBAND_PX` constants. `kp` sign is mount-specific,
-  verified via `scripts/sign_check.py`: pan `kp < 0`, tilt `kp > 0` on
-  this head. Re-run after any reassembly or camera reorientation. Also
-  `wide_handoff.py`: the coarse stage's `WideHandoffMapper` and its
-  `config/wide_handoff.json` loader/writer: an absolute pixel-to-tick
-  mapping rather than an incremental gain, since wide isn't co-mounted on
-  the gimbal telephoto's math assumes.
-- `camera/`: `nvarguscamerasrc` capture (`gstreamer_source.py`) for
-  both IMX477s, per-rig role config (`config.py`), PIP compositing
-  (`pip_compositor.py`) and the RTSP-relay wrapper around it
-  (`pip_relay.py`), plus an independent RTSP server (`rtsp_stream.py`)
-  for remote viewing.
+```
+pan_tilt_track/
+├── dynamixel/  servo control (dynamixel_sdk wrapper): torque enable,
+│               EEPROM/RAM writes, sync-write goal positions; no control
+│               law of its own. Per-rig config (port, IDs, joint limits)
+│               loads from config/servos.json.
+├── tracking/   YOLO26 track() wrapper (ByteTrack) + target.py's
+│               select_target() policy + TrackManager (sticky lock; the
+│               seam for future ID/ReID and multi-camera fusion). Wide
+│               and telephoto each run independent instances.
+├── control/    telephoto's fine-tracking loop (loop.py's TrackingLoop):
+│               gain.py's ProportionalGain + gains.py's tuned
+│               PAN_KP/TILT_KP/DEADBAND_PX. wide_handoff.py: the coarse
+│               stage's WideHandoffMapper + config/wide_handoff.json
+│               loader/writer.
+├── camera/     nvarguscamerasrc capture (gstreamer_source.py) + per-rig
+│               role config (config.py) for both IMX477s.
+└── stream/     PIP compositing (pip_compositor.py), the RTSP-relay
+                wrapper (pip_relay.py), and the RTSP server
+                (rtsp_stream.py) for remote viewing.
+```
+
+`TrackManager`'s independent per-camera instances are never ID-correlated
+across cameras; it's the intended seam for future ID/ReID and true
+multi-camera/world-coordinate fusion, neither implemented yet.
+`--target-mode {body,head}` selects bbox center or head-keypoint centroid
+for both cameras uniformly. `kp` sign is mount-specific, verified via
+`scripts/sign_check.py`: pan `kp < 0`, tilt `kp > 0` on this head;
+re-run after any reassembly or camera reorientation.
 
 ## Setup: Docker (recommended)
 
@@ -137,13 +134,6 @@ opencv-python` if not. `numpy<2` is pinned for the same reason.
 
 YOLO runs CPU-only here unless you separately install a Jetson-native
 PyTorch build. See `Dockerfile`.
-
-## Model weights
-
-`yolo26n.pt` / `yolo26n-pose.pt` are gitignored (`*.pt`) and are never
-committed: place them at the repo root manually. `scripts/docker-run.sh`
-bind-mounts them into the container automatically if present there, so no
-rebuild is needed after adding or swapping a model file.
 
 ## One-time host setup
 
