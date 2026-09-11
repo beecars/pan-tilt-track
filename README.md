@@ -47,17 +47,15 @@ Relevant specs are defined in `config/cameras.json` (used for `gstreamer` pipeli
 
 #### Calibration
 
+Wide and telephoto are non-collocated cameras, so a detection in wide's view corresponds to a "line" 
+of possible positions projected onto the telephoto camera's sensor. Unlike many vision tasks that 
+require precise correspondence (e.g. traditional stereo matching), this system just needs to put a 
+target somewhere in the telephoto camera's FOV. If the calibration is performed at or near the 
+"expected" target distance, the mapping of pixel-to-pan/tilt angle is more than accurate enough. 
+
 A run-once calibration `scripts/calibrate_wide_handoff.py` produces `config/wide_handoff.json`, which
 maps a detected pixel location in the wide camera's fixed frame to an absolute pan/tilt
 "goal" position. 
-
-Wide and telephoto are non-collocated cameras (different optical centers), so a detection in wide's 
-view corresponds to a "line" of possible positions projected onto the telephoto camera's sensor. 
-Additional information, such as a target's depth, is needed to find the *precise* correspondence on 
-that line. However, unlike many vision tasks that require precise correspondence (e.g. traditional 
-stereo matching), this system just needs to put a target somewhere in the telephoto camera's FOV. 
-If the calibration is performed at or near the "expected" target distance, the mapping of 
-pixel-to-pan/tilt angle is more than accurate enough. 
 
 **Notably, this calibration can be run in-situ without any special calibration 
 target. It uses a keypoint regression to find correspondeces between detections in the two cameras' 
