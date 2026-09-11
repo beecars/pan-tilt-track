@@ -103,22 +103,53 @@ camera mounted on a pan/tile mechanism.
 
 ```
 pan_tilt_track/
-├── dynamixel/  servo control (dynamixel_sdk wrapper): torque enable,
-│               EEPROM/RAM writes, sync-write goal positions; Config 
-│               (port, IDs, joint limits) loads from config/servos.json.
-├── tracking/   YOLO26 track() wrapper (ByteTrack) + target.py's
-│               select_target() policy + TrackManager. Wide
-│               and telephoto each run independent instances.
-├── control/    telephoto's tracking control loop (loop.py's TrackingLoop):
-│               gain.py's ProportionalGain + gains.py's tuned
-│               configuration. wide_handoff.py: the coarse
-│               stage's WideHandoffMapper + config/wide_handoff.json
-│               loader/writer.
-├── camera/     nvarguscamerasrc capture (gstreamer_source.py) + 
-│               config (config.py) for both IMX477s.
-└── stream/     Picture-in-Picture (PIP) compositing (pip_compositor.py), 
-                the RTSP-relay wrapper (pip_relay.py), and the RTSP server
-                (rtsp_stream.py) for remote viewing.
+├── dynamixel/
+│   ├── controller.py    PanTiltController: dynamixel_sdk wrapper owning
+│   │                    the port/packet handlers and RAM writes (torque,
+│   │                    profile velocity/acceleration, goal position).
+│   └── config.py         Control-table addresses + per-rig servo config
+│                        (port, IDs, joint limits/profile); loads from
+│                        config/servos.json.
+│
+├── tracking/
+│   ├── detector.py      YoloDetector: wraps Ultralytics YOLO's track()
+│   │                    with ByteTrack; accepts detection or pose
+│   │                    (`*-pose.pt`) models for box/keypoint output.
+│   ├── target.py        select_target(): picks a detection to track,
+│   │                    preferring a previously locked track ID.
+│   ├── track_manager.py TrackManager: maintains a sticky lock on one
+│   │                    detection's track ID across frames.
+│   └── overlay.py       Draws tracking diagnostics onto a frame: boxes,
+│                        locked-target highlight, crosshair, deadband
+│                        boundary, current pixel-error vector.
+│
+├── control/
+│   ├── gain.py          ProportionalGain: goal-position tick delta from
+│   │                    pixel error, with a deadband.
+│   ├── gains.py         Tuned pan/tilt gain constants, shared by
+│   │                    run_tracker.py and sign_check.py.
+│   ├── loop.py          TrackingLoop: wires camera -> detector ->
+│   │                    target selection -> gain -> sync-write goal
+│   │                    positions.
+│   └── wide_handoff.py  WideHandoffMapper: loads/saves wide-pixel ->
+│                        goal-tick calibration (config/wide_handoff.json)
+│                        and maps a pixel to an absolute goal position.
+│
+├── camera/
+│   ├── source.py            CameraSource protocol: read() + release().
+│   ├── gstreamer_source.py  nvarguscamerasrc capture for the IMX477;
+│   │                        builds the GStreamer pipeline, converts
+│   │                        frames to BGR numpy arrays.
+│   └── config.py             Per-rig camera config: sensor id, capture
+│                            mode, mount orientation (wide/telephoto).
+│
+└── stream/
+    ├── pip_compositor.py  Composites a smaller inset frame onto a larger
+    │                      main frame (picture-in-picture).
+    ├── pip_relay.py       Composites an optional inset onto a main frame
+    │                      and pushes the result to an RtspCameraServer.
+    └── rtsp_stream.py     RtspCameraServer: re-serves already-captured
+                           BGR frames over RTSP via an appsrc pipeline.
 ```
 
 `TrackManager`'s independent per-camera instances are never ID-correlated
@@ -147,33 +178,10 @@ confirmed working from inside the container.
 
 Base image: `nvcr.io/nvidia/l4t-jetpack:r36.4.0`.
 
-## Setup: bare host venv (alternative)
-
-```bash
-python3 -m venv --system-site-packages .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-```
-
-`--system-site-packages` picks up the GStreamer-enabled system OpenCV.
-`ultralytics` pulls in `opencv-python` transitively and can shadow it:
-check with `python -c "import cv2; print(cv2.__file__)"` (should resolve
-to `/usr/lib/python3.10/dist-packages`) and `pip uninstall -y
-opencv-python` if not. `numpy<2` is pinned for the same reason.
-
-YOLO runs CPU-only here unless you separately install a Jetson-native
-PyTorch build. See `Dockerfile`.
-
-## One-time host setup
-
-```bash
-./scripts/setup_ftdi_latency.sh
-```
-
-Fixes the U2D2's FTDI latency timer (16ms default, caps round-trip rate
-near 60Hz regardless of baud).
-
 ## Usage
+
+The commands below would be executed via `./scripts/docker-run.sh <command>` from the host, or 
+otherwise directly from inside the (properly initialized) container. 
 
 ```bash
 # Bring up the servos. Profile Velocity/Acceleration are RAM and reset
