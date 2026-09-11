@@ -15,6 +15,7 @@ Re-run after any reassembly or camera remount.
 import argparse
 import logging
 import sys
+import time
 
 import numpy as np
 
@@ -38,6 +39,120 @@ logger = logging.getLogger(__name__)
 # should span before the fit is trustworthy: a cluster of samples near
 # frame center under-constrains the slope.
 MIN_SPREAD_FRACTION = 0.3
+
+# Live status block redraw rate. Every on_step call updates state, but
+# only every Nth-of-a-second gets flushed to the terminal, so the
+# ~30fps loop doesn't spam the tty.
+RENDER_INTERVAL_S = 0.1
+
+GRID_COLS = 31
+GRID_ROWS = 13
+
+
+class LiveDisplay:
+    """Redraws a fixed status block in place (servo/centering/wide state,
+    sample counter, and an ASCII map of where in the wide frame samples
+    have landed), instead of scrolling one line per event. Requires a
+    real terminal -- run this script directly (not piped/redirected).
+    """
+
+    def __init__(self, wide_w: float, wide_h: float, min_samples: int, deadband_px: float) -> None:
+        self.wide_w = wide_w
+        self.wide_h = wide_h
+        self.min_samples = min_samples
+        self.deadband_px = deadband_px
+        self.grid = [[0 for _ in range(GRID_COLS)] for _ in range(GRID_ROWS)]
+        self._prev_height = 0
+        self._last_render = 0.0
+
+    def record_sample(self, dx: float, dy: float) -> None:
+        col = int((dx + self.wide_w / 2) / self.wide_w * (GRID_COLS - 1))
+        row = int((dy + self.wide_h / 2) / self.wide_h * (GRID_ROWS - 1))
+        col = min(max(col, 0), GRID_COLS - 1)
+        row = min(max(row, 0), GRID_ROWS - 1)
+        self.grid[row][col] += 1
+
+    def _render_map(self) -> list[str]:
+        center_row, center_col = GRID_ROWS // 2, GRID_COLS // 2
+        lines = []
+        for r in range(GRID_ROWS):
+            chars = []
+            for c in range(GRID_COLS):
+                count = self.grid[r][c]
+                if count >= 3:
+                    chars.append("#")
+                elif count >= 1:
+                    chars.append("o")
+                elif r == center_row and c == center_col:
+                    chars.append("+")
+                elif r == center_row:
+                    chars.append("-")
+                elif c == center_col:
+                    chars.append("|")
+                else:
+                    chars.append(".")
+            lines.append("  " + "".join(chars))
+        return lines
+
+    @staticmethod
+    def _bar(value: float, extent: float, width: int = 21) -> str:
+        v = max(-extent, min(extent, value))
+        pos = round((v + extent) / (2 * extent) * (width - 1))
+        chars = ["-"] * width
+        chars[width // 2] = "|"
+        chars[pos] = "#"
+        return "".join(chars)
+
+    def render(
+        self,
+        num_samples: int,
+        servo_status: str,
+        pixel_error_x: float | None,
+        pixel_error_y: float | None,
+        pan_delta: int | None,
+        tilt_delta: int | None,
+        wide_status: str,
+        force: bool = False,
+    ) -> None:
+        now = time.monotonic()
+        if not force and (now - self._last_render) < RENDER_INTERVAL_S:
+            return
+        self._last_render = now
+
+        lines = ["Wide-handoff calibration -- Ctrl+C to stop early", ""]
+
+        if pan_delta or tilt_delta:
+            lines.append(f"servo:    MOVING   pan={pan_delta:+d}  tilt={tilt_delta:+d}")
+        else:
+            lines.append(f"servo:    {servo_status}")
+
+        if pixel_error_x is None:
+            lines.append("center:   -- (no telephoto lock)")
+        else:
+            lines.append(
+                f"center:   pan  {self._bar(pixel_error_x, self.wide_w / 2)}  {pixel_error_x:+7.1f}px "
+                f"(deadband +/-{self.deadband_px:.0f}px)"
+            )
+            lines.append(
+                f"          tilt {self._bar(pixel_error_y, self.wide_h / 2)}  {pixel_error_y:+7.1f}px"
+            )
+
+        lines.append(f"wide:     {wide_status}")
+        filled = int(num_samples / self.min_samples * 20) if self.min_samples else 0
+        filled = min(filled, 20)
+        lines.append(f"samples:  {num_samples}/{self.min_samples}  [{'=' * filled}{'-' * (20 - filled)}]")
+        lines.append("")
+        lines.append("coverage (wide frame):")
+        lines.extend(self._render_map())
+
+        out = []
+        if self._prev_height:
+            out.append(f"\033[{self._prev_height}A")
+        for line in lines:
+            out.append("\033[2K" + line + "\n")
+        sys.stdout.write("".join(out))
+        sys.stdout.flush()
+        self._prev_height = len(lines)
 
 
 def fit_axis(offsets: list[float], ticks: list[float], frame_extent: float, axis_name: str) -> tuple[float, float]:
@@ -85,15 +200,34 @@ def main() -> int:
     ) as wide_camera:
         controller.initialize()
         wide_detector = YoloDetector(model_path=model_path, classes=[0])  # class 0 = person in COCO
+        display = LiveDisplay(
+            wide_w=wide.capture_width, wide_h=wide.capture_height,
+            min_samples=args.min_samples, deadband_px=DEADBAND_PX,
+        )
 
         def on_step(info: dict) -> None:
-            if info["pixel_error_x"] is None or info.get("pan_delta") != 0 or info.get("tilt_delta") != 0:
-                return  # no target, or mid-correction: not well-centered yet
+            pixel_error_x = info.get("pixel_error_x")
+            pixel_error_y = info.get("pixel_error_y")
+            pan_delta = info.get("pan_delta")
+            tilt_delta = info.get("tilt_delta")
+
+            if pixel_error_x is None:
+                display.render(len(pan_samples), "SETTLED", None, None, None, None, "-- (no telephoto lock)")
+                return  # no target
+            if pan_delta or tilt_delta:
+                display.render(len(pan_samples), "SETTLED", pixel_error_x, pixel_error_y, pan_delta, tilt_delta, "-- (centering)")
+                return  # mid-correction: not well-centered yet
+
             wide_frame = wide_camera.read()
             if wide_frame is None:
+                display.render(len(pan_samples), "SETTLED", pixel_error_x, pixel_error_y, 0, 0, "no frame")
                 return
             detections = wide_detector.track(wide_frame)
             if len(detections) != 1:
+                display.render(
+                    len(pan_samples), "SETTLED", pixel_error_x, pixel_error_y, 0, 0,
+                    f"{len(detections)} detections (need exactly 1)",
+                )
                 return
             wx, wy = detections[0].target_point(args.target_mode)
             wide_h, wide_w = wide_frame.shape[:2]
@@ -102,8 +236,11 @@ def main() -> int:
             tilt_tick = controller.read_present_position(config.tilt_id)
             pan_samples.append((dx, pan_tick))
             tilt_samples.append((dy, tilt_tick))
-            if len(pan_samples) % 10 == 0:
-                print(f"collected {len(pan_samples)} samples...")
+            display.record_sample(dx, dy)
+            display.render(
+                len(pan_samples), "SETTLED", pixel_error_x, pixel_error_y, 0, 0, "1 detection -> sample recorded",
+                force=True,
+            )
 
         telephoto_detector = YoloDetector(model_path=model_path, classes=[0])
         loop = TrackingLoop(

@@ -10,6 +10,8 @@ import dynamixel_sdk as dxl
 
 from .config import (
     ADDR_GOAL_POSITION,
+    ADDR_POSITION_I_GAIN,
+    ADDR_POSITION_P_GAIN,
     ADDR_PRESENT_POSITION,
     ADDR_PROFILE_ACCELERATION,
     ADDR_PROFILE_VELOCITY,
@@ -131,6 +133,24 @@ class PanTiltController:
             )
         )
 
+    def write_position_p_gain(self, dxl_id: int, gain: int) -> None:
+        self._retry_comm(
+            dxl_id, "write_position_p_gain", lambda: self.packet_handler.write2ByteTxRx(
+                self.port_handler, dxl_id, ADDR_POSITION_P_GAIN, gain
+            )
+        )
+
+    def write_position_i_gain(self, dxl_id: int, gain: int) -> None:
+        # Small integral term: P-only control leaves a permanent steady-
+        # state error whenever P_gain * error stays below the torque
+        # needed to break static friction -- I accumulates that residual
+        # error over time until it does.
+        self._retry_comm(
+            dxl_id, "write_position_i_gain", lambda: self.packet_handler.write2ByteTxRx(
+                self.port_handler, dxl_id, ADDR_POSITION_I_GAIN, gain
+            )
+        )
+
     def read_present_position(self, dxl_id: int) -> int:
         return self._retry_comm(
             dxl_id, "read_present_position", lambda: self.packet_handler.read4ByteTxRx(
@@ -178,6 +198,8 @@ class PanTiltController:
             self.set_torque(dxl_id, enabled=False)
             self.write_velocity_limit(dxl_id, limits.velocity_limit)
             self.write_profile(dxl_id, limits.profile_velocity, limits.profile_acceleration)
+            self.write_position_p_gain(dxl_id, limits.position_p_gain)
+            self.write_position_i_gain(dxl_id, limits.position_i_gain)
             self.set_torque(dxl_id, enabled=True)
         logger.info("Pan/tilt controller initialized")
 

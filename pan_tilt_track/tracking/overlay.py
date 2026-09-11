@@ -28,6 +28,17 @@ HUD_COLOR_WARN = (0, 165, 255)  # slowest detect-side stage this frame
 HUD_COLOR_ACCENT = (0, 220, 0)  # servo state: echoes COLOR_TARGET
 
 
+def draw_mode_badge(frame, wide_driven: bool) -> None:
+    """Top-left label showing which stage currently owns the servo goal:
+    wide-driven coarse acquisition (no telephoto lock yet) vs telephoto's
+    own fine-tracking. Black outline keeps it legible over any background."""
+    label = "WIDE ACQUIRE" if wide_driven else "TELE TRACK"
+    color = HUD_COLOR_WARN if wide_driven else HUD_COLOR_ACCENT
+    origin = (12, 28)
+    cv2.putText(frame, label, origin, HUD_FONT, 0.7, (0, 0, 0), 4, cv2.LINE_AA)
+    cv2.putText(frame, label, origin, HUD_FONT, 0.7, color, 2, cv2.LINE_AA)
+
+
 def draw_tracking_overlay(
     frame,
     detections: list[Detection],

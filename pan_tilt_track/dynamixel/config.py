@@ -10,6 +10,8 @@ from pathlib import Path
 
 # X-series (Protocol 2.0) control table addresses used here:
 ADDR_TORQUE_ENABLE = 64        # 1 byte, RAM
+ADDR_POSITION_D_GAIN = 80      # 2 bytes, RAM
+ADDR_POSITION_I_GAIN = 82      # 2 bytes, RAM
 ADDR_POSITION_P_GAIN = 84      # 2 bytes, RAM
 ADDR_PROFILE_ACCELERATION = 108  # 4 bytes, RAM (resets to 0 on power-up)
 ADDR_PROFILE_VELOCITY = 112    # 4 bytes, RAM (resets to 0 on power-up)
@@ -32,6 +34,10 @@ def rpm_to_velocity_units(rpm: float) -> int:
     return round(rpm / RPM_PER_VELOCITY_UNIT)
 
 
+DEFAULT_POSITION_P_GAIN = 400  # XL330 firmware default
+DEFAULT_POSITION_I_GAIN = 0    # XL330 firmware default (no integral action)
+
+
 @dataclass(frozen=True)
 class JointLimits:
     min_position: int
@@ -39,6 +45,8 @@ class JointLimits:
     velocity_limit: int
     profile_velocity: int
     profile_acceleration: int
+    position_p_gain: int = DEFAULT_POSITION_P_GAIN
+    position_i_gain: int = DEFAULT_POSITION_I_GAIN
 
 
 def clamp_position(value: int, limits: JointLimits) -> int:
@@ -63,6 +71,8 @@ def _joint_limits_from(joint: dict) -> JointLimits:
         velocity_limit=rpm_to_velocity_units(joint["velocity_limit_rpm"]),
         profile_velocity=joint["profile_velocity"],
         profile_acceleration=joint["profile_acceleration"],
+        position_p_gain=joint.get("position_p_gain", DEFAULT_POSITION_P_GAIN),
+        position_i_gain=joint.get("position_i_gain", DEFAULT_POSITION_I_GAIN),
     )
 
 

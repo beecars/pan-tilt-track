@@ -24,6 +24,7 @@ from pan_tilt_track.control.wide_handoff import (
 from pan_tilt_track.dynamixel import DEFAULT_SERVO_CONFIG_PATH, PanTiltController, load_dynamixel_config
 from pan_tilt_track.dynamixel.config import clamp_position
 from pan_tilt_track.tracking.detector import YoloDetector
+from pan_tilt_track.tracking.overlay import draw_mode_badge
 from pan_tilt_track.tracking.track_manager import TrackManager
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -130,6 +131,7 @@ def main() -> int:
                 wide_frame = wide_camera.read()
                 if wide_frame is not None:
                     main_frame, inset_frame = wide_frame, frame
+            draw_mode_badge(main_frame, wide_driven=tele_loop.track_manager.locked_track_id is None)
             relay.push(main_frame, inset_frame)
 
         controller.initialize()

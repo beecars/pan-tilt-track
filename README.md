@@ -1,12 +1,16 @@
 # pan-tilt-track
 
-Two-DOF (pan/tilt) visual tracking head: DYNAMIXEL XL330 servo control +
-YOLO26 detection/tracking, closing the loop from pixel error to servo
-motion. Two-stage coarse-to-fine tracking across a fixed wide camera and
-a telephoto camera mounted on the gimbal. See Architecture below.
+A prototype multi-camera target tracking platform with pan/tilt control. A fixed position wide-angle
+camera acquires a target (or multiple candidates), then a telephoto camera on a pan/tilt bracket 
+tracks it. An initial calibration step coarsely maps the wide-angle camera's pixel coordinates to 
+pan/tilt servo positions, enabling target handoff to the telephoto camera. 
 
-Standalone Python package, built to be pulled in as a submodule of a
-larger system (global tracking, identification).
+Intended features to be implemented: (1) Target ID/ReID. (2) Fine calibration for depth estimation. (3) World-coordinate tracking. (3) World-coordinate tracking. 
+
+The protoype construction is shown below. Most parts are 3D printed, with the exception of 
+**`DYNAMIXEL H101`** and **`S102`** servo brackets. The model files can be found in `assets/`. Construction 
+details are not included in this repository, but the short video below shows the basic assembly and 
+mechanical operation. 
 
 <p align="center">
   <img src="assets/hardware_diagram.webp" alt="Hardware walkthrough" width="480">
@@ -16,75 +20,75 @@ larger system (global tracking, identification).
 
 ### Compute
 
-Jetson Orin Nano Super Developer Kit, L4T 36.5.0 / JetPack 6.2. No
-hardware video encoder: optional RTSP feed uses software encoding
-(`x264enc`), competing with YOLO for CPU.
+Jetson Orin Nano Super Developer Kit. `L4T 36.5.0` / `JetPack 6.2`. `MAXN` power mode. 
 
 ### Cameras
+This project was validated with (2x) **`Arducam IMX477`** CSI sensors. Other 
+Jetson-compatible cameras may also work, but it is important to check with the manufacturer if the
+camera modules can be used in a dual-CSI configuration. The Arducam IMX477 MINI does provode dual-CSI
+support for Jetson Orin, and the platform allows for lenses to be swapped so that one sensor can be
+equipped for wide-angle target acquisition (see more) and the other for telephoto (see "better"). 
 
-2x IMX477 CSI sensors, `nvarguscamerasrc`, 1920x1080@30fps.
-
-| Role | Mount | Role in tracking |
+| Lens | Mount | Role in tracking
 | --- | --- | --- |
-| **wide** | Fixed/stationary, rotated 180° (`flip_method`) | The only camera that ever decides where to swing the gimbal to *acquire* a target |
-| **telephoto** | On the pan/tilt bracket | Runs its own detection and fine self-correction once a target is in frame, and keeps tracking it even after it leaves wide's FOV; wide is only consulted again once telephoto's own lock is lost |
+| **wide** | Fixed/stationary | Decides where to swing the gimbal to *acquire* a target. |
+| **telephoto** | Pan/Tilt | Tracks targets (via PID control loop) once acquired. Higher pixels-on-target. 
 
-Which physical sensor is which role, and its mount orientation, is
-per-rig calibration data in `config/cameras.json` (see
-`pan_tilt_track/camera/config.py`), not hardcoded, since it changes on
-reassembly. Re-verify after any physical remount.
+Relevant specs are defined in `config/cameras.json` (used for `gstreamer` pipelines and calibration).
 
-A separate per-rig calibration, `config/wide_handoff.json`, maps a
-detected pixel location in wide's (fixed) frame to an absolute pan/tilt
-goal position, necessary because wide isn't co-mounted with the gimbal,
-so a pixel offset there doesn't relate to a servo tick delta through a
-fixed gain the way telephoto's own offset does. Produced empirically by
-`scripts/calibrate_wide_handoff.py`, not hand-authored. See Usage below.
+#### Calibration
 
-Wide and telephoto are two non-collocated cameras (different optical
-centers), so a detection in wide's view doesn't correspond to one
-correct pan/tilt goal -- it corresponds to a line of possible positions
-in 3D (the ray through that pixel), and only the target's actual depth
-picks out the point on that line telephoto needs to be aimed at. The
-calibration doesn't solve this -- it approximates it: the linear fit is
-implicitly collapsing that line down to the single depth (or narrow
-depth range) the calibration-walk samples happened to be collected at,
-and treating that as if it held everywhere. So it's only accurate for
-targets near that same nominal depth range; targets notably closer or
-farther will see larger coarse-aim error, especially near the frame
-edges. Notably, the error shrinks as target distance increases (the
-baseline between the two cameras becomes negligible relative to depth),
-so a rig tracking distant targets is far more forgiving of an
-imprecise calibration depth than one tracking close-range targets.
-Calibration should therefore be performed at (or around) the distance
-you actually expect targets to be tracked at -- see Usage below.
+A run-once calibration `scripts/calibrate_wide_handoff.py` produces `config/wide_handoff.json`, which
+maps a detected pixel location in the wide camera's fixed frame to an absolute pan/tilt
+"goal" position. 
+
+Wide and telephoto are non-collocated cameras (different optical centers), so a detection in wide's 
+view corresponds to a "line" of possible positions in 3D space (the ray through that pixel). 
+Additional information, such as a target's depth, is needed to find the *precise* point on 
+that line telephoto needs to be aimed at. Camera calibration alone doesn't solve this, but unlike 
+many vision tasks that require precise correspondence (e.g., stereo matching), this system just 
+needs to put a target somewhere in the telephoto camera's FOV. If the calibration is performed at or near the "expected" target distance, the mapping of pixel-to-pan/tilt angle is more than accurate enough. 
+
+Notably, this calibration can be run in-situ without any special calibration 
+target. It uses a keypoint regression to find correspondeces between the two cameras' views. 
 
 ### Servos
 
-2x ROBOTIS DYNAMIXEL XL330, Protocol 2.0, 57600 baud, driven directly
-(no external servo controller board).
+2x **`ROBOTIS DYNAMIXEL XL330`** w/ **`ROBOTIS U2D2`** USB-to-TTL adapter (assumed to be on 
+`/dev/ttyUSB0`).
+
 
 | Joint | ID | Range |
 | --- | --- | --- |
-| Pan | 1 | 490–3550 ticks (≈269°) |
-| Tilt | 2 | 2048–3246 ticks (≈105°, one-sided from mechanical center) |
+| Pan | 1 | ≈269° |
+| Tilt | 2 | ≈105°, one-sided from mechanical center |
 
-Port/baudrate/IDs/joint limits are likewise per-rig config, in
-`config/servos.json` (see `pan_tilt_track/dynamixel/config.py`).
+Port/baudrate/IDs/joint limits are in`config/servos.json` (also see 
+`pan_tilt_track/dynamixel/config.py`).
 
-### Servo interface
+#### Position PID / profile tuning
 
-ROBOTIS U2D2 USB-to-TTL adapter, `/dev/ttyUSB0`.
+Per-joint `profile_velocity`, `profile_acceleration`, `position_p_gain`,
+`position_i_gain` in `config/servos.json`, written to the servo's RAM
+control table by `PanTiltController.initialize()` on every startup.
+
+| Joint | profile_velocity | profile_acceleration | position_p_gain | position_i_gain |
+| --- | --- | --- | --- | --- |
+| Pan | 200 | 30 | 400 (default) | 30 |
+| Tilt | 200 | 30 | 800 | 60 |
+
+Re-tune after any reassembly or hardware swap. Too high a P or I gain
+causes ringing/overshoot instead of a clean settle.
+
 
 ### Mechanical
 
 2-DOF pan/tilt bracket, actuated directly by the two XL330s.
 
-## Block diagram
+## Program Flow
 
-Two-stage coarse-to-fine visual servo. Wide (fixed) only ever fires when
-telephoto currently has no lock; telephoto (on the gimbal) does its own
-fine tracking otherwise, including once the target has left wide's FOV.
+Two-stage tracking where a wide-FoV camera acquires targets and hands them off to a telephoto 
+camera mounted on a pan/tile mechanism.
 
 <p align="center">
   <img src="assets/block_diagram.svg" alt="Block diagram">
@@ -92,43 +96,30 @@ fine tracking otherwise, including once the target has left wide's FOV.
 
 <sub>Source: `assets/block_diagram.mmd`. Regenerate after editing with `mermaid.ink` or `mmdc`.</sub>
 
-The servo firmware's position PID + Profile Velocity/Acceleration is the
-only closed-loop control at the joint level. The bracket physically
-re-aiming the telephoto camera is what closes the loop back to vision for
-fine tracking; this codebase never reads back whether a goal position
-was actually reached. Wide's mapping is an open-loop coarse move (no
-feedback that it actually landed telephoto on the target); telephoto's
-own detector picking the target up afterward is the confirmation. See
-`TrackManager` below for the seam this leaves for future ID/ReID and
-true multi-camera/world-coordinate fusion, neither built yet.
-
 ## Architecture
 
 ```
 pan_tilt_track/
 ├── dynamixel/  servo control (dynamixel_sdk wrapper): torque enable,
-│               EEPROM/RAM writes, sync-write goal positions; no control
-│               law of its own. Per-rig config (port, IDs, joint limits)
-│               loads from config/servos.json.
+│               EEPROM/RAM writes, sync-write goal positions; Config 
+│               (port, IDs, joint limits) loads from config/servos.json.
 ├── tracking/   YOLO26 track() wrapper (ByteTrack) + target.py's
-│               select_target() policy + TrackManager (sticky lock; the
-│               seam for future ID/ReID and multi-camera fusion). Wide
+│               select_target() policy + TrackManager. Wide
 │               and telephoto each run independent instances.
-├── control/    telephoto's fine-tracking loop (loop.py's TrackingLoop):
+├── control/    telephoto's tracking control loop (loop.py's TrackingLoop):
 │               gain.py's ProportionalGain + gains.py's tuned
-│               PAN_KP/TILT_KP/DEADBAND_PX. wide_handoff.py: the coarse
+│               configuration. wide_handoff.py: the coarse
 │               stage's WideHandoffMapper + config/wide_handoff.json
 │               loader/writer.
-├── camera/     nvarguscamerasrc capture (gstreamer_source.py) + per-rig
-│               role config (config.py) for both IMX477s.
-└── stream/     PIP compositing (pip_compositor.py), the RTSP-relay
-                wrapper (pip_relay.py), and the RTSP server
+├── camera/     nvarguscamerasrc capture (gstreamer_source.py) + 
+│               config (config.py) for both IMX477s.
+└── stream/     Picture-in-Picture (PIP) compositing (pip_compositor.py), 
+                the RTSP-relay wrapper (pip_relay.py), and the RTSP server
                 (rtsp_stream.py) for remote viewing.
 ```
 
 `TrackManager`'s independent per-camera instances are never ID-correlated
-across cameras; it's the intended seam for future ID/ReID and true
-multi-camera/world-coordinate fusion, neither implemented yet.
+across cameras. To be addressed in future work (ID/ReID). 
 `--target-mode {body,head}` selects bbox center or head-keypoint centroid
 for both cameras uniformly. `kp` sign is mount-specific, verified via
 `scripts/sign_check.py`: pan `kp < 0`, tilt `kp > 0` on this head;
