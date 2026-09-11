@@ -52,16 +52,17 @@ maps a detected pixel location in the wide camera's fixed frame to an absolute p
 "goal" position. 
 
 Wide and telephoto are non-collocated cameras (different optical centers), so a detection in wide's 
-view corresponds to a "line" of possible positions in 3D space (the ray through that pixel). 
-Additional information, such as a target's depth, is needed to find the *precise* point on 
-that line telephoto needs to be aimed at. Camera calibration alone doesn't solve this, but unlike 
-many vision tasks that require precise correspondence (e.g. traditional stereo matching), this system just 
-needs to put a target somewhere in the telephoto camera's FOV. If the calibration is performed at or 
-near the "expected" target distance, the mapping of pixel-to-pan/tilt angle is more than accurate 
-enough. 
+view corresponds to a "line" of possible positions projected onto the telephoto camera's sensor. 
+Additional information, such as a target's depth, is needed to find the *precise* correspondence on 
+that line. However, unlike many vision tasks that require precise correspondence (e.g. traditional 
+stereo matching), this system just needs to put a target somewhere in the telephoto camera's FOV. 
+If the calibration is performed at or near the "expected" target distance, the mapping of 
+pixel-to-pan/tilt angle is more than accurate enough. 
 
-Notably, this calibration can be run in-situ without any special calibration 
-target. It uses a keypoint regression to find correspondeces between the two cameras' views. 
+**Notably, this calibration can be run in-situ without any special calibration 
+target. It uses a keypoint regression to find correspondeces between detections in the two cameras' 
+views. The system can be placed in a real environment, loaded with a detection model, and the 
+calibration can be performed using the targets of interest at their "expected" distance(s).**
 
 ### Servos
 
