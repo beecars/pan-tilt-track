@@ -41,6 +41,24 @@ so a pixel offset there doesn't relate to a servo tick delta through a
 fixed gain the way telephoto's own offset does. Produced empirically by
 `scripts/calibrate_wide_handoff.py`, not hand-authored. See Usage below.
 
+Wide and telephoto are two non-collocated cameras (different optical
+centers), so a detection in wide's view doesn't correspond to one
+correct pan/tilt goal -- it corresponds to a line of possible positions
+in 3D (the ray through that pixel), and only the target's actual depth
+picks out the point on that line telephoto needs to be aimed at. The
+calibration doesn't solve this -- it approximates it: the linear fit is
+implicitly collapsing that line down to the single depth (or narrow
+depth range) the calibration-walk samples happened to be collected at,
+and treating that as if it held everywhere. So it's only accurate for
+targets near that same nominal depth range; targets notably closer or
+farther will see larger coarse-aim error, especially near the frame
+edges. Notably, the error shrinks as target distance increases (the
+baseline between the two cameras becomes negligible relative to depth),
+so a rig tracking distant targets is far more forgiving of an
+imprecise calibration depth than one tracking close-range targets.
+Calibration should therefore be performed at (or around) the distance
+you actually expect targets to be tracked at -- see Usage below.
+
 ### Servos
 
 2x ROBOTIS DYNAMIXEL XL330, Protocol 2.0, 57600 baud, driven directly
@@ -178,6 +196,11 @@ python scripts/dual_camera_smoke_test.py
 # part of the session, until it collects enough samples (Ctrl+C to stop
 # early, or wait for --min-samples). Writes config/wide_handoff.json,
 # which run_tracker.py refuses to start without.
+#
+# Walk at (or around) the distance from the rig you actually expect
+# targets to be tracked at -- see Architecture above: the fit is only
+# accurate near whatever depth the calibration samples were collected
+# at, so calibrating at the wrong distance biases every later handoff.
 python scripts/calibrate_wide_handoff.py
 
 # Full two-stage tracking loop: wide acquires, telephoto fine-tracks.
