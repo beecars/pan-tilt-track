@@ -1,9 +1,15 @@
 # pan-tilt-track
 
-A prototype multi-camera target tracking platform with pan/tilt control. A fixed position wide-angle
-camera acquires a target (or multiple candidates), then a telephoto camera on a pan/tilt bracket 
-tracks it. An initial calibration step loosely maps the wide-angle camera's pixel coordinates to 
-pan/tilt servo positions, enabling target handoff to the telephoto camera. 
+Often in detection and tacking we are trying to balance the tradeoff between **field-of-view (FOV)** and
+**pixels-on-target (POT)**. A wide FOV camera can see more of the scene, but a target may only occupy a 
+few pixels. A telephoto camera can see a target in more detail, but it may not be able to see the 
+target at all if it is outside the FOV.
+
+This repository implements a prototype multi-camera target tracking platform with pan/tilt control
+to sidestep the tradeoff entirely. A fixed position wide-angle camera acquires a target (or multiple candidates), then a telephoto 
+camera on a pan/tilt bracket tracks it via PID control. 
+An initial calibration step loosely maps the wide-angle camera's pixel coordinates to pan/tilt servo 
+positions, enabling target handoff to the telephoto camera. 
 
 Intended features not yet implemented: 
 1. Target ID/ReID. 
@@ -81,8 +87,8 @@ A PID profile is written to the servo's RAM control table by `PanTiltController.
 | Pan | 200 | 30 | 400 (default) | 30 |
 | Tilt | 200 | 30 | 800 | 60 |
 
-Note: If other servos or cameras are used, the above values may need to be re-tuned. The 
-`scripts/init_servos.py` script can be used to write new values to the servos' RAM.
+>*Note: If other servos or cameras are used, the above values may need to be re-tuned. The 
+`scripts/init_servos.py` script can be used to write new values to the servos' RAM. For the listed hardware, integral gain is needed to counteract gravity on the tilt axis. It was also found to help with friction and/or larger moment on the pan axis.*
 
 ## Program Flow
 
