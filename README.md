@@ -2,21 +2,24 @@
 
 A prototype multi-camera target tracking platform with pan/tilt control. A fixed position wide-angle
 camera acquires a target (or multiple candidates), then a telephoto camera on a pan/tilt bracket 
-tracks it. An initial calibration step coarsely maps the wide-angle camera's pixel coordinates to 
+tracks it. An initial calibration step loosely maps the wide-angle camera's pixel coordinates to 
 pan/tilt servo positions, enabling target handoff to the telephoto camera. 
 
-Intended features to be implemented: (1) Target ID/ReID. (2) Fine calibration for depth estimation. (3) World-coordinate tracking. (3) World-coordinate tracking. 
+Intended features not yet implemented: 
+1. Target ID/ReID. 
 
-The protoype construction is shown below. Most parts are 3D printed, with the exception of 
-**`DYNAMIXEL H101`** and **`S102`** servo brackets. The model files can be found in `assets/`. Construction 
-details are not included in this repository, but the short video below shows the basic assembly and 
-mechanical operation. 
+## Enclosure Design
+
+Most parts are 3D printed, with the exception of **`DYNAMIXEL H101`** and **`S102`** servo brackets
+and various assembly hardware (M2 and M3 screws, nuts, spacers, heat-set inserts, etc.). The model 
+files can be found in `assets/`. Construction details are not included in this repository, but the 
+short video below shows the basic assembly and mechanical operation. 
 
 <p align="center">
   <img src="assets/hardware_diagram.webp" alt="Hardware walkthrough" width="480">
 </p>
 
-## Hardware
+## Electronics & Hardware
 
 ### Compute
 
@@ -25,7 +28,7 @@ Jetson Orin Nano Super Developer Kit. `L4T 36.5.0` / `JetPack 6.2`. `MAXN` power
 ### Cameras
 This project was validated with (2x) **`Arducam IMX477`** CSI sensors. Other 
 Jetson-compatible cameras may also work, but it is important to check with the manufacturer if the
-camera modules can be used in a dual-CSI configuration. The Arducam IMX477 MINI does provode dual-CSI
+camera modules can be used in a dual-CSI configuration. The Arducam IMX477 MINI does provide dual-CSI
 support for Jetson Orin, and the platform allows for lenses to be swapped so that one sensor can be
 equipped for wide-angle target acquisition (see more) and the other for telephoto (see "better"). 
 
@@ -46,8 +49,10 @@ Wide and telephoto are non-collocated cameras (different optical centers), so a 
 view corresponds to a "line" of possible positions in 3D space (the ray through that pixel). 
 Additional information, such as a target's depth, is needed to find the *precise* point on 
 that line telephoto needs to be aimed at. Camera calibration alone doesn't solve this, but unlike 
-many vision tasks that require precise correspondence (e.g., stereo matching), this system just 
-needs to put a target somewhere in the telephoto camera's FOV. If the calibration is performed at or near the "expected" target distance, the mapping of pixel-to-pan/tilt angle is more than accurate enough. 
+many vision tasks that require precise correspondence (e.g. traditional stereo matching), this system just 
+needs to put a target somewhere in the telephoto camera's FOV. If the calibration is performed at or 
+near the "expected" target distance, the mapping of pixel-to-pan/tilt angle is more than accurate 
+enough. 
 
 Notably, this calibration can be run in-situ without any special calibration 
 target. It uses a keypoint regression to find correspondeces between the two cameras' views. 
@@ -68,26 +73,20 @@ Port/baudrate/IDs/joint limits are in`config/servos.json` (also see
 
 #### Position PID / profile tuning
 
-Per-joint `profile_velocity`, `profile_acceleration`, `position_p_gain`,
-`position_i_gain` in `config/servos.json`, written to the servo's RAM
-control table by `PanTiltController.initialize()` on every startup.
+A PID profile is written to the servo's RAM control table by `PanTiltController.initialize()` on 
+**every startup**.
 
 | Joint | profile_velocity | profile_acceleration | position_p_gain | position_i_gain |
 | --- | --- | --- | --- | --- |
 | Pan | 200 | 30 | 400 (default) | 30 |
 | Tilt | 200 | 30 | 800 | 60 |
 
-Re-tune after any reassembly or hardware swap. Too high a P or I gain
-causes ringing/overshoot instead of a clean settle.
-
-
-### Mechanical
-
-2-DOF pan/tilt bracket, actuated directly by the two XL330s.
+Note: If other servos or cameras are used, the above values may need to be re-tuned. The 
+`scripts/init_servos.py` script can be used to write new values to the servos' RAM.
 
 ## Program Flow
 
-Two-stage tracking where a wide-FoV camera acquires targets and hands them off to a telephoto 
+Two-stage tracking where a wide FOV camera acquires targets and hands them off to a telephoto 
 camera mounted on a pan/tile mechanism.
 
 <p align="center">
