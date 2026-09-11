@@ -64,6 +64,42 @@ target. It uses a keypoint regression to find correspondeces between detections 
 views. The system can be placed in a real environment, loaded with a detection model, and the 
 calibration can be performed using the targets of interest at their "expected" distance(s).**
 
+During calibration, `scripts/calibrate_wide_handoff.py` redraws a live status block in place
+(servo state, telephoto's centering error, and an ASCII map of where in the wide frame samples
+have landed). Example partway through a run:
+
+```
+Wide-handoff calibration -- Ctrl+C to stop early
+
+servo:    SETTLED
+center:   pan  ----------#----------     +2.3px (deadband +/-6px)
+          tilt ----------#----------     -1.1px
+wide:     1 detection -> sample recorded
+samples:  43/100  [========------------]
+
+coverage (wide frame):
+  ...............|...............
+  ...............|...............
+  ...............|...............
+  ...............|o..o.........o.
+  .ooooo...o.....|.....o..oo...o.
+  oo..o........o.|oo.oo.....o....
+  -#---o-o-o-o--o+----o-oo-------
+  .o.......o..o..o...............
+  ...............|..oo.....o.....
+  ...............|...............
+  ...............|...............
+  ...............|...............
+  ...............|...............
+```
+
+`center` shows telephoto's current pixel error on each axis as a bar with `|` at zero and `#` at
+the current value; a sample is only recorded when both axes are within the deadband and the wide view
+sees exactly one detection. The coverage map buckets recorded samples
+by their position in the wide frame (`o` = 1-2 samples in that cell, `#` = 3+). This gives a quick 
+visual check on the distribution of samples across the wide frame. The calibration will stop 
+automatically once the minimum number of samples is reached, or can be stopped early with Ctrl+C.
+
 ### Servos
 
 2x **`ROBOTIS DYNAMIXEL XL330`** w/ **`ROBOTIS U2D2`** USB-to-TTL adapter (assumed to be on 
