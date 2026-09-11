@@ -18,7 +18,7 @@ Intended features not yet implemented:
 
 Most parts are 3D printed, with the exception of **`DYNAMIXEL H101`** and **`S102`** servo brackets
 and various assembly hardware (M2 and M3 screws, nuts, spacers, heat-set inserts, etc.). The model 
-files can be found in `assets/`. Construction details are not included in this repository, but the 
+files can be found in `assets/pan-tilt-track.step`. Construction details are not included in this repository, but the 
 short video below shows the basic assembly and mechanical operation. 
 
 <p align="center">
@@ -98,8 +98,6 @@ camera mounted on a pan/tile mechanism.
 <p align="center">
   <img src="assets/block_diagram.svg" alt="Block diagram">
 </p>
-
-<sub>Source: `assets/block_diagram.mmd`. Regenerate after editing with `mermaid.ink` or `mmdc`.</sub>
 
 ## Architecture
 
