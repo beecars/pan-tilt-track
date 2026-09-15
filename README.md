@@ -189,8 +189,11 @@ pan_tilt_track/
 
 `TrackManager`'s independent per-camera instances are never ID-correlated
 across cameras. To be addressed in future work (ID/ReID). 
-`--target-mode {body,head}` selects bbox center or head-keypoint centroid
-for both cameras uniformly. `kp` sign is mount-specific, verified via
+`--mode {body,head,animal}` selects what both cameras aim at and detect:
+bbox center (body, any class), head-keypoint centroid (head, needs a pose
+model, person only), or bbox center restricted to COCO bird/cat/dog
+classes (animal). An explicit `--classes` overrides whatever classes
+`--mode` would otherwise pick. `kp` sign is mount-specific, verified via
 `scripts/sign_check.py`: pan `kp < 0`, tilt `kp > 0` on this head;
 re-run after any reassembly or camera reorientation.
 
@@ -248,7 +251,11 @@ python scripts/run_tracker.py --rtsp
 python scripts/run_tracker.py --rtsp --rtsp-pip
 
 # Track the head instead of the body (both cameras).
-python scripts/run_tracker.py --target-mode head --rtsp
+python scripts/run_tracker.py --mode head --rtsp
+
+# Animal track mode: restrict detection to COCO bird/cat/dog classes
+# (both cameras), aiming at bbox center.
+python scripts/run_tracker.py --mode animal --rtsp
 
 # Point at a different rig's config (defaults are config/cameras.json,
 # config/servos.json, and config/wide_handoff.json).

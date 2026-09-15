@@ -18,6 +18,14 @@ logger = logging.getLogger(__name__)
 HEAD_KEYPOINT_INDICES = (0, 1, 2, 3, 4)  # nose, left_eye, right_eye, left_ear, right_ear
 HEAD_KEYPOINT_CONF_THRESHOLD = 0.3
 
+# COCO class IDs used by the --mode animal preset (scripts/run_tracker.py).
+# COCO pose models only have keypoints for the person class, so animal
+# subjects are body-mode only.
+COCO_CLASS_BIRD = 14
+COCO_CLASS_CAT = 15
+COCO_CLASS_DOG = 16
+ANIMAL_CLASS_IDS = (COCO_CLASS_BIRD, COCO_CLASS_CAT, COCO_CLASS_DOG)
+
 # Pinned rather than left on Ultralytics' own default (see module
 # docstring) so the tracker in use doesn't silently change with the
 # installed library version.

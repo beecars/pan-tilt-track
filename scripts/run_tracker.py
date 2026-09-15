@@ -23,7 +23,7 @@ from pan_tilt_track.control.wide_handoff import (
 )
 from pan_tilt_track.dynamixel import DEFAULT_SERVO_CONFIG_PATH, PanTiltController, load_dynamixel_config
 from pan_tilt_track.dynamixel.config import clamp_position
-from pan_tilt_track.tracking.detector import YoloDetector
+from pan_tilt_track.tracking.detector import ANIMAL_CLASS_IDS, YoloDetector
 from pan_tilt_track.tracking.overlay import draw_mode_badge
 from pan_tilt_track.tracking.track_manager import TrackManager
 
@@ -50,13 +50,21 @@ def main() -> int:
     )
     parser.add_argument("--pip-scale", type=float, default=0.25, help="inset width as a fraction of main frame width")
     parser.add_argument("--pip-margin", type=int, default=16)
-    parser.add_argument("--model", default=None, help="default: yolo26n.pt, or yolo26n-pose.pt for --target-mode head")
-    parser.add_argument("--classes", type=int, nargs="*", default=None)
+    parser.add_argument("--model", default=None, help="default: yolo26n.pt, or yolo26n-pose.pt for --mode head")
     parser.add_argument(
-        "--target-mode",
-        choices=["body", "head"],
+        "--classes",
+        type=int,
+        nargs="*",
+        default=None,
+        help="override the detection classes --mode would otherwise pick",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["body", "head", "animal"],
         default="body",
-        help="aim at the bbox center (body) or head keypoints (head, needs a pose model)",
+        help="body: aim at bbox center, any class. head: aim at head keypoints "
+        "(needs a pose model, person only). animal: aim at bbox center, "
+        "restricted to COCO bird/cat/dog classes.",
     )
     parser.add_argument(
         "--verbose", action="store_true", help="print per-frame pixel error / goal position"
@@ -65,13 +73,18 @@ def main() -> int:
     if args.rtsp_pip and not args.rtsp:
         parser.error("--rtsp-pip requires --rtsp")
 
+    target_mode = "head" if args.mode == "head" else "body"
+    classes = args.classes if args.classes is not None else (
+        list(ANIMAL_CLASS_IDS) if args.mode == "animal" else None
+    )
+
     try:
         wide_handoff_calibration = load_wide_handoff_config(args.wide_handoff_config)
     except (FileNotFoundError, ValueError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
 
-    model_path = args.model or ("yolo26n-pose.pt" if args.target_mode == "head" else "yolo26n.pt")
+    model_path = args.model or ("yolo26n-pose.pt" if args.mode == "head" else "yolo26n.pt")
     cameras = load_cameras_config(args.camera_config)
     telephoto, wide = cameras.telephoto, cameras.wide
 
@@ -135,9 +148,9 @@ def main() -> int:
             relay.push(main_frame, inset_frame)
 
         controller.initialize()
-        telephoto_detector = YoloDetector(model_path=model_path, classes=args.classes)
-        wide_detector = YoloDetector(model_path=model_path, classes=args.classes)
-        wide_track_manager = TrackManager(target_mode=args.target_mode)
+        telephoto_detector = YoloDetector(model_path=model_path, classes=classes)
+        wide_detector = YoloDetector(model_path=model_path, classes=classes)
+        wide_track_manager = TrackManager(target_mode=target_mode)
         wide_mapper = WideHandoffMapper(
             wide_handoff_calibration, frame_center=(wide.capture_width / 2, wide.capture_height / 2)
         )
@@ -150,7 +163,7 @@ def main() -> int:
             tilt_gain=ProportionalGain(kp=TILT_KP, deadband_px=DEADBAND_PX),
             on_frame=on_frame if rtsp_server is not None else None,
             on_step=on_step if args.verbose else None,
-            target_mode=args.target_mode,
+            target_mode=target_mode,
             draw_overlay=args.overlay,
         )
 
@@ -165,7 +178,7 @@ def main() -> int:
             target = wide_track_manager.update(detections, (frame_w / 2, frame_h / 2))
             if target is None:
                 return
-            x, y = target.target_point(args.target_mode)
+            x, y = target.target_point(target_mode)
             pan_goal, tilt_goal = wide_mapper.pixel_to_goal(x, y)
             pan_goal = clamp_position(pan_goal, config.pan_limits)
             tilt_goal = clamp_position(tilt_goal, config.tilt_limits)
