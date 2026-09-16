@@ -14,6 +14,7 @@ from ..tracking.detector import YoloDetector
 from ..tracking.overlay import draw_debug_hud, draw_tracking_overlay
 from ..tracking.track_manager import TrackManager
 from .gain import ProportionalGain
+from .manual import ManualOverride
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,8 @@ class TrackingLoop:
         target_mode: str = "body",
         draw_overlay: bool = False,
         track_manager: TrackManager | None = None,
+        manual_override: ManualOverride | None = None,
+        overlay_active: Callable[[], bool] | None = None,
     ):
         self.camera = camera
         self.detector = detector
@@ -52,9 +55,24 @@ class TrackingLoop:
         # for). Injectable so a future ReID-capable or multi-camera-aware
         # manager can be swapped in without touching TrackingLoop again.
         self.track_manager = track_manager or TrackManager(target_mode=target_mode)
+        # When set and .enabled, wasd is driving the servos directly (see
+        # ManualOverride) -- step() still tracks/displays but skips its own
+        # servo writes so the two don't fight over the goal position.
+        self.manual_override = manual_override
+        # Called (when set) to decide whether this frame's overlay/HUD
+        # should actually be burned in, e.g. a PIP viewer that only wants
+        # them on whichever camera is currently the large main frame --
+        # ignored unless draw_overlay is also True.
+        self.overlay_active = overlay_active
         # Wall-clock timestamp of the previous step() call, used only to
         # compute the observed loop period for the debug HUD.
         self._last_step_time: float | None = None
+        # Detection count from the most recent step(), for callers doing
+        # their own state/handoff logging (e.g. scripts/run_tracker.py).
+        self.last_num_detections: int = 0
+        # Observed loop period from the most recent step(), for callers
+        # showing their own FPS/pipeline stats (e.g. LiveDashboard).
+        self.last_frame_interval_ms: float | None = None
 
     def step(self) -> bool:
         """Process one frame. Returns False if the camera has no frame."""
@@ -63,12 +81,17 @@ class TrackingLoop:
             (now - self._last_step_time) * 1000 if self._last_step_time is not None else None
         )
         self._last_step_time = now
+        self.last_frame_interval_ms = frame_interval_ms
 
         frame = self.camera.read()
         if frame is None:
             return False
 
-        if self.on_frame is not None and not self.draw_overlay:
+        should_draw_overlay = self.draw_overlay and (
+            self.overlay_active is None or self.overlay_active()
+        )
+
+        if self.on_frame is not None and not should_draw_overlay:
             self.on_frame(frame)
 
         height, width = frame.shape[:2]
@@ -76,6 +99,7 @@ class TrackingLoop:
 
         detections = self.detector.track(frame)
         detect_timing = self.detector.last_timing
+        self.last_num_detections = len(detections)
 
         target = self.track_manager.update(detections, frame_center)
 
@@ -95,6 +119,8 @@ class TrackingLoop:
 
             pan_delta = self.pan_gain.compute(pixel_error_x)
             tilt_delta = self.tilt_gain.compute(pixel_error_y)
+            if self.manual_override is not None and self.manual_override.enabled:
+                pan_delta = tilt_delta = 0
 
             cfg = self.controller.config
             if pan_delta != 0 or tilt_delta != 0:
@@ -108,14 +134,14 @@ class TrackingLoop:
                 self.controller.sync_write_goal_positions(pan_position, tilt_position)
                 servo_io_ms = (time.perf_counter() - t0) * 1000
                 debug_pan_position, debug_tilt_position = pan_position, tilt_position
-            elif self.draw_overlay:
+            elif should_draw_overlay:
                 # In the deadband: no goal written, but read position for the HUD.
                 t0 = time.perf_counter()
                 debug_pan_position = self.controller.read_present_position(cfg.pan_id)
                 debug_tilt_position = self.controller.read_present_position(cfg.tilt_id)
                 servo_io_ms = (time.perf_counter() - t0) * 1000
 
-        if self.draw_overlay:
+        if should_draw_overlay:
             t0 = time.perf_counter()
             draw_tracking_overlay(
                 frame,

@@ -48,7 +48,11 @@ class RtspCameraServer:
 
         factory = GstRtspServer.RTSPMediaFactory()
         factory.set_launch(
-            "( appsrc name=source is-live=true block=true format=time "
+            # block=false: push_frame() runs inline in the tracking loop
+            # (and gates keyboard polling for manual/pip-swap control), so
+            # a slow client or an overloaded software encoder must never
+            # be able to stall it -- drop frames instead of blocking.
+            "( appsrc name=source is-live=true block=false format=time "
             f"caps=video/x-raw,format=BGR,width={width},height={height},framerate={framerate}/1 ! "
             "videoconvert ! video/x-raw,format=I420 ! "
             # Software encoder: the Orin Nano has no hardware encoder

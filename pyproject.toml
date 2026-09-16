@@ -12,6 +12,8 @@ dependencies = [
     "lap>=0.5.12",
     # <2: required by the GStreamer-enabled system OpenCV. >=1.23: ultralytics's floor.
     "numpy>=1.23,<2",
+    # Live CLI dashboard (scripts/run_tracker.py); --plain skips it.
+    "rich",
 ]
 
 [project.optional-dependencies]

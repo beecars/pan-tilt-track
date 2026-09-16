@@ -15,6 +15,12 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # `docker run`.
 mkdir -p "$REPO_ROOT/.gst-cache"
 
+# So run_tracker.py's 'c' key capture (written to ./captures, relative to
+# the container's /app) survives past --rm instead of vanishing with the
+# container. Same deal for --record's clips.
+mkdir -p "$REPO_ROOT/captures"
+mkdir -p "$REPO_ROOT/clips"
+
 WEIGHT_MOUNT=()
 for weights in yolo26n.pt yolo26n-pose.pt; do
     if [ -f "$REPO_ROOT/$weights" ]; then
@@ -36,5 +42,7 @@ docker run --rm -it \
     -v "$REPO_ROOT/scripts:/app/scripts" \
     -v "$REPO_ROOT/tests:/app/tests" \
     -v "$REPO_ROOT/config:/app/config" \
+    -v "$REPO_ROOT/captures:/app/captures" \
+    -v "$REPO_ROOT/clips:/app/clips" \
     "${WEIGHT_MOUNT[@]}" \
     pan-tilt-track "$@"

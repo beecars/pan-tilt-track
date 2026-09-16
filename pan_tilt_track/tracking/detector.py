@@ -75,7 +75,12 @@ class Detection:
 
 
 class YoloDetector:
-    def __init__(self, model_path: str = "yolo26n.pt", classes: list[int] | None = None):
+    def __init__(
+        self,
+        model_path: str = "yolo26n.pt",
+        classes: list[int] | None = None,
+        imgsz: int | None = None,
+    ):
         self.model = YOLO(model_path)
         cuda_available = torch.cuda.is_available()
         if cuda_available:
@@ -96,6 +101,8 @@ class YoloDetector:
             torch.version.cuda,
         )
         self.classes = classes
+        # None leaves Ultralytics' own default (640) in effect.
+        self.imgsz = imgsz
         # Per-call timing breakdown, set by track(). preprocess/nn_inference/
         # postprocess come from Ultralytics' own timers (result.speed),
         # which stop before the ByteTrack update runs; track_ms recovers
@@ -104,8 +111,14 @@ class YoloDetector:
 
     def track(self, frame) -> list[Detection]:
         t_start = time.perf_counter()
+        extra_kwargs = {"imgsz": self.imgsz} if self.imgsz is not None else {}
         results = self.model.track(
-            frame, persist=True, classes=self.classes, tracker=TRACKER_CONFIG, verbose=False
+            frame,
+            persist=True,
+            classes=self.classes,
+            tracker=TRACKER_CONFIG,
+            verbose=False,
+            **extra_kwargs,
         )
         detections: list[Detection] = []
         result = results[0] if results else None
