@@ -166,12 +166,19 @@ def main() -> int:
             for y in (0, wide.capture_height)
         )
     )
+    run_config = {
+        "mode": args.mode,
+        "model": model_path,
+        "imgsz": args.det_imgsz or "default",
+        "overlay": "on" if args.overlay else "off",
+    }
     reporter = (
         PlainReporter()
         if plain
         else LiveDashboard(
             config.pan_limits,
             config.tilt_limits,
+            run_config=run_config,
             wide_cam=f"{wide.capture_width}x{wide.capture_height}",
             tele_cam=f"{telephoto.capture_width}x{telephoto.capture_height}",
             wide_pan_bounds=wide_pan_bounds,
@@ -298,9 +305,16 @@ def main() -> int:
         )
 
         current_state: str | None = None
-        last_wide_detections = 0
-        last_wide_timing: dict[str, float] = {}
+        # Which camera the single shared `detector` most recently ran on --
+        # there's only ever one detector pipeline in flight, interleaved
+        # between wide (ACQUIRE) and tele (HANDOFF), not two running in
+        # parallel; this is the fork's "which branch is live" indicator.
+        # wide/tele each also keep their own last-known timing/count, since
+        # whichever branch isn't currently running still shows what it saw
+        # last time it did.
         last_detector_source: str | None = None
+        wide_timing: dict[str, float] = {}
+        wide_detections = 0
 
         def note_state(state: str, num_detections: int) -> None:
             nonlocal current_state
@@ -312,14 +326,14 @@ def main() -> int:
             """Wide-driven coarse positioning: only called when telephoto
             currently has no lock of its own. Returns wide's selected
             target (or None), steering toward it first if found."""
-            nonlocal last_wide_detections, last_wide_timing, last_detector_source
+            nonlocal last_detector_source, wide_timing, wide_detections
             wide_frame = wide_camera.read()
             if wide_frame is None:
                 return None
             detections = detector.track(wide_frame, reset=last_detector_source != "wide")
             last_detector_source = "wide"
-            last_wide_detections = len(detections)
-            last_wide_timing = detector.last_timing
+            wide_detections = len(detections)
+            wide_timing = detector.last_timing
             frame_h, frame_w = wide_frame.shape[:2]
             target = wide_track_manager.update(detections, (frame_w / 2, frame_h / 2))
             if target is None:
@@ -393,7 +407,7 @@ def main() -> int:
                     was_locked = is_locked
 
                     num_detections = (
-                        tele_loop.last_num_detections if state == "HANDOFF" else last_wide_detections
+                        tele_loop.last_num_detections if state == "HANDOFF" else wide_detections
                     )
                     note_state(state, num_detections)
 
@@ -401,15 +415,24 @@ def main() -> int:
                     if not plain:
                         pan_ticks = controller.read_present_position(config.pan_id)
                         tilt_ticks = controller.read_present_position(config.tilt_id)
+                    locked_target = tele_loop.last_target if state == "HANDOFF" else None
                     reporter.update(
                         state=state,
-                        wide_detections=last_wide_detections,
-                        tele_detections=tele_loop.last_num_detections,
-                        wide_timing=last_wide_timing,
+                        detect_source=last_detector_source,
+                        wide_timing=wide_timing,
+                        wide_detections=wide_detections,
                         tele_timing=tele_loop.last_detect_timing,
-                        tele_frame_interval_ms=tele_loop.last_frame_interval_ms,
+                        tele_detections=tele_loop.last_num_detections,
+                        loop_interval_ms=tele_loop.last_frame_interval_ms,
+                        locked_track_id=locked_target.track_id if locked_target is not None else None,
+                        locked_confidence=locked_target.confidence if locked_target is not None else None,
                         pan_ticks=pan_ticks,
                         tilt_ticks=tilt_ticks,
+                        recording=recorder is not None and recorder.active,
+                        recording_elapsed=recorder.elapsed_seconds if recorder is not None and recorder.active else None,
+                        recording_total=recorder.total_seconds if recorder is not None and recorder.active else None,
+                        rtsp_active=rtsp_server is not None,
+                        pip_active=args.rtsp_pip,
                     )
         except KeyboardInterrupt:
             reporter.log("Stopping")

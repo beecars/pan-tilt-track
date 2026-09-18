@@ -34,6 +34,14 @@ class ClipRecorder:
     def active(self) -> bool:
         return self._writer is not None
 
+    @property
+    def elapsed_seconds(self) -> float:
+        return self._frame_count / self.framerate
+
+    @property
+    def total_seconds(self) -> float:
+        return self.max_frames / self.framerate
+
     def start(self) -> Path:
         """Begin a new clip, finalizing any clip already in progress
         first. Returns the output path."""

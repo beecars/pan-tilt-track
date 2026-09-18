@@ -26,6 +26,7 @@ STATE_STYLE = {
 }
 
 
+
 class PlainReporter:
     """--plain fallback: log() is a plain print(), update() is a no-op
     since there's no live view to redraw. Also what a non-interactive
@@ -44,22 +45,30 @@ class PlainReporter:
         pass
 
 
-def _stage_box(name: str, value: str) -> Panel:
+def _stage_box(name: str, value: str, border_style: str, width: int = 12) -> Panel:
     return Panel(
         Text(f"{name}\n{value}", justify="center"),
-        width=12,
+        width=width,
         padding=(0, 0),
-        border_style="grey50",
+        border_style=border_style,
     )
 
 
-def _pipeline_row(label: str, cam: str, timing: dict, extra: str) -> Table:
-    """One block-diagram row: input -> preprocess -> inference ->
-    postprocess -> tracker, each stage's most recent timing (from
-    YoloDetector.last_timing) in its own box."""
+def _branch_row(label: str, cam: str, timing: dict, count: int, active: bool) -> Table:
+    """One branch of the fork feeding the single shared YoloDetector:
+    input -> preprocess -> inference -> postprocess -> tracker. Both wide
+    and tele get their own row with their own last-known stats, but only
+    one branch is ever actually flowing through the detector at a time --
+    `active` (this frame's detect_source) picks which row lights up, so
+    the still/dim row reads as "last known, not currently running", not
+    as a second pipeline running in parallel."""
     def _ms(key: str) -> str:
         value = timing.get(key)
         return f"{value:5.1f}ms" if value is not None else "   – "
+
+    row_style = "bold cyan" if active else "dim"
+    box_style = "cyan" if active else "grey50"
+    arrow = "▶" if active else " "
 
     stages = [
         ("IN", cam),
@@ -69,12 +78,13 @@ def _pipeline_row(label: str, cam: str, timing: dict, extra: str) -> Table:
         ("TRACK", _ms("track_ms")),
     ]
     grid = Table.grid(padding=(0, 0))
-    cells = [Text(f" {label} ", style="bold cyan")]
+    cells = [Text(f"{arrow} {label} ", style=row_style)]
     for i, (name, value) in enumerate(stages):
         if i > 0:
-            cells.append(Text(" → ", style="dim"))
-        cells.append(_stage_box(name, value))
-    cells.append(Text(f"  {extra}", style="dim"))
+            cells.append(Text(" → ", style=row_style if active else "dim"))
+        box_width = 14 if name == "IN" else 12
+        cells.append(_stage_box(name, value, box_style, width=box_width))
+    cells.append(Text(f"  {count} det", style=row_style))
     for _ in cells:
         grid.add_column(vertical="middle")
     grid.add_row(*cells)
@@ -116,18 +126,26 @@ def _gauge(
     return bar
 
 
+def _badge(label: str, active: bool, active_style: str) -> Text:
+    return Text(f" {label} ", style=f"bold white on {active_style}" if active else "dim")
+
+
 class LiveDashboard:
-    """Rich Live view: a block-diagram of each detector's pipeline
-    (input -> preprocess -> inference -> postprocess -> tracker) with
-    live per-stage timings, current acquire/handoff/manual state and
-    detection counts, pan/tilt position (ticks, degrees, and a bar gauge
-    against the joint's configured limits), and a rolling log of state
-    transitions / capture / record events underneath."""
+    """Rich Live view: a fork/merge block-diagram of the two camera
+    branches (wide, tele) feeding the one shared YoloDetector -- each
+    branch shows its own last-known stats, with an arrow/highlight on
+    whichever branch is actually flowing through the detector this frame
+    -- current acquire/handoff/manual state, the locked track's ID/
+    confidence, pan/tilt position (ticks, degrees, and a bar gauge against
+    the joint's configured limits), status badges (recording/RTSP/PIP),
+    the active run config, and a rolling log of state transitions /
+    capture / record events underneath."""
 
     def __init__(
         self,
         pan_limits: JointLimits,
         tilt_limits: JointLimits,
+        run_config: dict | None = None,
         wide_cam: str = "wide",
         tele_cam: str = "tele",
         wide_pan_bounds: tuple[int, int] | None = None,
@@ -136,6 +154,11 @@ class LiveDashboard:
     ):
         self.pan_limits = pan_limits
         self.tilt_limits = tilt_limits
+        # Static summary of this run's CLI flags (mode, model, overlay/
+        # rtsp/pip, ...) -- see scripts/run_tracker.py -- shown once in a
+        # header line so it's visible without scrolling back to startup
+        # logs.
+        self.run_config = run_config or {}
         self.wide_cam = wide_cam
         self.tele_cam = tele_cam
         # The pan/tilt sub-range wide's own FOV can command, per its
@@ -146,13 +169,23 @@ class LiveDashboard:
         self._log: deque[str] = deque(maxlen=max_log_lines)
 
         self.state = "STARTING"
-        self.wide_detections = 0
-        self.tele_detections = 0
+        # Which branch actually fed the shared detector this frame --
+        # drives the fork's arrow/highlight.
+        self.detect_source: str | None = None
         self.wide_timing: dict = {}
         self.tele_timing: dict = {}
-        self.tele_frame_interval_ms: float | None = None
+        self.wide_detections = 0
+        self.tele_detections = 0
+        self.loop_interval_ms: float | None = None
+        self.locked_track_id: int | None = None
+        self.locked_confidence: float | None = None
         self.pan_ticks: int | None = None
         self.tilt_ticks: int | None = None
+        self.recording = False
+        self.recording_elapsed: float | None = None
+        self.recording_total: float | None = None
+        self.rtsp_active = False
+        self.pip_active = False
 
         self._live = Live(self._render(), refresh_per_second=8, transient=False)
 
@@ -175,25 +208,55 @@ class LiveDashboard:
     def _render(self) -> Group:
         label, style = STATE_STYLE.get(self.state, (self.state, "white"))
 
-        fps = f"  {1000 / self.tele_frame_interval_ms:.1f} fps" if self.tele_frame_interval_ms else ""
         pipeline = Group(
-            _pipeline_row("WIDE", self.wide_cam, self.wide_timing, f"{self.wide_detections} det"),
-            _pipeline_row("TELE", self.tele_cam, self.tele_timing, f"{self.tele_detections} det{fps}"),
+            _branch_row(
+                "WIDE", self.wide_cam, self.wide_timing, self.wide_detections,
+                active=self.detect_source == "wide",
+            ),
+            _branch_row(
+                "TELE", self.tele_cam, self.tele_timing, self.tele_detections,
+                active=self.detect_source == "tele",
+            ),
         )
 
         stats = Table.grid(padding=(0, 2))
         stats.add_column(justify="right", style="dim")
         stats.add_column()
-        stats.add_row("state", Text(label, style=f"bold {style}"))
+        fps = f"  ({1000 / self.loop_interval_ms:.1f} fps)" if self.loop_interval_ms else ""
+        stats.add_row("state", Text.assemble((label, f"bold {style}"), (fps, "dim")))
+        stats.add_row("track", self._track_row())
         stats.add_row("pan", self._axis_row(self.pan_ticks, self.pan_limits, self.wide_pan_bounds))
         stats.add_row("tilt", self._axis_row(self.tilt_ticks, self.tilt_limits, self.wide_tilt_bounds))
 
-        log_text = Text("\n".join(self._log) or "…", style="dim")
-        return Group(
-            Panel(pipeline, title="pipeline", border_style="magenta"),
-            Panel(stats, title="pan-tilt-track", border_style="blue"),
-            Panel(log_text, title="log", border_style="grey50"),
+        badges = Table.grid(padding=(0, 1))
+        for _ in range(3):
+            badges.add_column()
+        rec_label = "REC" if self.recording_elapsed is None else (
+            f"REC {self.recording_elapsed:4.1f}/{self.recording_total:.0f}s"
         )
+        badges.add_row(
+            _badge(rec_label, self.recording, "red"),
+            _badge("RTSP", self.rtsp_active, "blue"),
+            _badge("PIP", self.pip_active, "blue"),
+        )
+
+        panels = [Panel(pipeline, title="pipeline (shared detector)", border_style="magenta")]
+        if self.run_config:
+            panels.append(self._config_panel())
+        panels.append(Panel(stats, title="pan-tilt-track", border_style="blue"))
+        panels.append(Panel(badges, border_style="grey50"))
+        panels.append(Panel(Text("\n".join(self._log) or "…", style="dim"), title="log", border_style="grey50"))
+        return Group(*panels)
+
+    def _config_panel(self) -> Panel:
+        line = "  ".join(f"{k}={v}" for k, v in self.run_config.items())
+        return Panel(Text(line, style="dim"), border_style="grey50")
+
+    def _track_row(self) -> Text:
+        if self.locked_track_id is None:
+            return Text("–", style="dim")
+        conf = f"  {self.locked_confidence:.0%}" if self.locked_confidence is not None else ""
+        return Text(f"#{self.locked_track_id}{conf}", style="bold green")
 
     def _axis_row(self, ticks: int | None, limits: JointLimits, bounds: tuple[int, int] | None) -> Text:
         row = _gauge(ticks, limits, bounds)

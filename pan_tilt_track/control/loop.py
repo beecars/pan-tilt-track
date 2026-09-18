@@ -77,6 +77,11 @@ class TrackingLoop:
         # ran detection, for callers reading it after a detector shared
         # with another camera source has since moved on (e.g. LiveDashboard).
         self.last_detect_timing: dict[str, float] = {}
+        # The target selected by the most recent detecting step() (or None
+        # if nothing was locked/selected that frame), for callers wanting
+        # its track_id/confidence without recomputing target selection
+        # (e.g. LiveDashboard's lock readout).
+        self.last_target = None
 
     def step(self, detect: bool = True, reset: bool = False) -> bool:
         """Process one frame. Returns False if the camera has no frame.
@@ -111,6 +116,7 @@ class TrackingLoop:
             self.last_num_detections = len(detections)
             self.last_detect_timing = detect_timing
             target = self.track_manager.update(detections, frame_center)
+            self.last_target = target
         else:
             detections = []
             detect_timing = {}

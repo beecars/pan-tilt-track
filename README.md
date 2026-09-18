@@ -14,6 +14,88 @@ positions, enabling target handoff to the telephoto camera.
 Intended features not yet implemented: 
 1. Target ID/ReID. 
 
+## Architecture
+
+```
+pan_tilt_track/
+├── dynamixel/
+│   ├── controller.py    PanTiltController: dynamixel_sdk wrapper owning
+│   │                    the port/packet handlers and RAM writes (torque,
+│   │                    profile velocity/acceleration, goal position).
+│   └── config.py         Control-table addresses + per-rig servo config
+│                        (port, IDs, joint limits/profile); loads from
+│                        config/servos.json.
+│
+├── tracking/
+│   ├── detector.py      YoloDetector: wraps Ultralytics YOLO's track()
+│   │                    with ByteTrack; accepts detection or pose
+│   │                    (`*-pose.pt`) models for box/keypoint output.
+│   ├── target.py        select_target(): picks a detection to track,
+│   │                    preferring a previously locked track ID.
+│   ├── track_manager.py TrackManager: maintains a sticky lock on one
+│   │                    detection's track ID across frames.
+│   └── overlay.py       Draws tracking diagnostics onto a frame: boxes,
+│                        locked-target highlight, crosshair, deadband
+│                        boundary, current pixel-error vector.
+│
+├── control/
+│   ├── gain.py          ProportionalGain: goal-position tick delta from
+│   │                    pixel error, with a deadband.
+│   ├── gains.py         Tuned pan/tilt gain constants, shared by
+│   │                    run_tracker.py and sign_check.py.
+│   ├── loop.py          TrackingLoop: wires camera -> detector ->
+│   │                    target selection -> gain -> sync-write goal
+│   │                    positions.
+│   └── wide_handoff.py  WideHandoffMapper: loads/saves wide-pixel ->
+│                        goal-tick calibration (config/wide_handoff.json)
+│                        and maps a pixel to an absolute goal position.
+│
+├── camera/
+│   ├── source.py            CameraSource protocol: read() + release().
+│   ├── gstreamer_source.py  nvarguscamerasrc capture for the IMX477;
+│   │                        builds the GStreamer pipeline, converts
+│   │                        frames to BGR numpy arrays.
+│   └── config.py             Per-rig camera config: sensor id, capture
+│                            mode, mount orientation (wide/telephoto).
+│
+└── stream/
+    ├── pip_compositor.py  Composites a smaller inset frame onto a larger
+    │                      main frame (picture-in-picture).
+    ├── pip_relay.py       Composites an optional inset onto a main frame
+    │                      and pushes the result to an RtspCameraServer.
+    └── rtsp_stream.py     RtspCameraServer: re-serves already-captured
+                           BGR frames over RTSP via an appsrc pipeline.
+```
+
+`TrackManager`'s independent per-camera instances are never ID-correlated
+across cameras. To be addressed in future work (ID/ReID). 
+`--mode {body,head,animal}` selects what both cameras aim at and detect:
+bbox center (body, any class), head-keypoint centroid (head, needs a pose
+model, person only), or bbox center restricted to COCO bird/cat/dog
+classes (animal). An explicit `--classes` overrides whatever classes
+`--mode` would otherwise pick. `kp` sign is mount-specific, verified via
+`scripts/sign_check.py`: pan `kp < 0`, tilt `kp > 0` on this head;
+re-run after any reassembly or camera reorientation.
+
+## Setup: Docker (recommended)
+
+The ML stack (torch/CUDA/OpenCV) is built into an image rather than a
+bare venv. See `Dockerfile` for the pinned versions and why.
+
+```bash
+docker build -t pan-tilt-track .
+./scripts/docker-run.sh                        # runs the full tracker
+./scripts/docker-run.sh python scripts/init_servos.py
+./scripts/docker-run.sh python scripts/dual_camera_smoke_test.py
+```
+
+`docker-run.sh` passes `--runtime nvidia` for GPU, `-v /dev:/dev` +
+the Argus socket for the cameras, and `--device /dev/ttyUSB0` for the
+servos. GPU YOLO, dual-camera capture, and servo serial are all
+confirmed working from inside the container.
+
+Base image: `nvcr.io/nvidia/l4t-jetpack:r36.4.0`.
+
 ## Enclosure Design
 
 Most parts are 3D printed, with the exception of **`DYNAMIXEL H101`** and **`S102`** servo brackets
@@ -125,92 +207,6 @@ A PID profile is written to the servo's RAM control table by `PanTiltController.
 >*Note: If other servos or cameras are used, the above values may need to be re-tuned. The 
 `scripts/init_servos.py` script can be used to write new values to the servos' RAM. For the listed hardware, integral gain is needed to counteract gravity on the tilt axis. It was also found to help with friction and/or larger moment on the pan axis.*
 
-## Program Flow
-
-Two-stage tracking where a wide FOV camera acquires targets and hands them off to a telephoto 
-camera mounted on a pan/tile mechanism.
-
-## Architecture
-
-```
-pan_tilt_track/
-├── dynamixel/
-│   ├── controller.py    PanTiltController: dynamixel_sdk wrapper owning
-│   │                    the port/packet handlers and RAM writes (torque,
-│   │                    profile velocity/acceleration, goal position).
-│   └── config.py         Control-table addresses + per-rig servo config
-│                        (port, IDs, joint limits/profile); loads from
-│                        config/servos.json.
-│
-├── tracking/
-│   ├── detector.py      YoloDetector: wraps Ultralytics YOLO's track()
-│   │                    with ByteTrack; accepts detection or pose
-│   │                    (`*-pose.pt`) models for box/keypoint output.
-│   ├── target.py        select_target(): picks a detection to track,
-│   │                    preferring a previously locked track ID.
-│   ├── track_manager.py TrackManager: maintains a sticky lock on one
-│   │                    detection's track ID across frames.
-│   └── overlay.py       Draws tracking diagnostics onto a frame: boxes,
-│                        locked-target highlight, crosshair, deadband
-│                        boundary, current pixel-error vector.
-│
-├── control/
-│   ├── gain.py          ProportionalGain: goal-position tick delta from
-│   │                    pixel error, with a deadband.
-│   ├── gains.py         Tuned pan/tilt gain constants, shared by
-│   │                    run_tracker.py and sign_check.py.
-│   ├── loop.py          TrackingLoop: wires camera -> detector ->
-│   │                    target selection -> gain -> sync-write goal
-│   │                    positions.
-│   └── wide_handoff.py  WideHandoffMapper: loads/saves wide-pixel ->
-│                        goal-tick calibration (config/wide_handoff.json)
-│                        and maps a pixel to an absolute goal position.
-│
-├── camera/
-│   ├── source.py            CameraSource protocol: read() + release().
-│   ├── gstreamer_source.py  nvarguscamerasrc capture for the IMX477;
-│   │                        builds the GStreamer pipeline, converts
-│   │                        frames to BGR numpy arrays.
-│   └── config.py             Per-rig camera config: sensor id, capture
-│                            mode, mount orientation (wide/telephoto).
-│
-└── stream/
-    ├── pip_compositor.py  Composites a smaller inset frame onto a larger
-    │                      main frame (picture-in-picture).
-    ├── pip_relay.py       Composites an optional inset onto a main frame
-    │                      and pushes the result to an RtspCameraServer.
-    └── rtsp_stream.py     RtspCameraServer: re-serves already-captured
-                           BGR frames over RTSP via an appsrc pipeline.
-```
-
-`TrackManager`'s independent per-camera instances are never ID-correlated
-across cameras. To be addressed in future work (ID/ReID). 
-`--mode {body,head,animal}` selects what both cameras aim at and detect:
-bbox center (body, any class), head-keypoint centroid (head, needs a pose
-model, person only), or bbox center restricted to COCO bird/cat/dog
-classes (animal). An explicit `--classes` overrides whatever classes
-`--mode` would otherwise pick. `kp` sign is mount-specific, verified via
-`scripts/sign_check.py`: pan `kp < 0`, tilt `kp > 0` on this head;
-re-run after any reassembly or camera reorientation.
-
-## Setup: Docker (recommended)
-
-The ML stack (torch/CUDA/OpenCV) is built into an image rather than a
-bare venv. See `Dockerfile` for the pinned versions and why.
-
-```bash
-docker build -t pan-tilt-track .
-./scripts/docker-run.sh                        # runs the full tracker
-./scripts/docker-run.sh python scripts/init_servos.py
-./scripts/docker-run.sh python scripts/dual_camera_smoke_test.py
-```
-
-`docker-run.sh` passes `--runtime nvidia` for GPU, `-v /dev:/dev` +
-the Argus socket for the cameras, and `--device /dev/ttyUSB0` for the
-servos. GPU YOLO, dual-camera capture, and servo serial are all
-confirmed working from inside the container.
-
-Base image: `nvcr.io/nvidia/l4t-jetpack:r36.4.0`.
 
 ## Usage
 
