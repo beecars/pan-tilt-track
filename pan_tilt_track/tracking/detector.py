@@ -109,12 +109,17 @@ class YoloDetector:
         # that as the remainder of the measured wall time.
         self.last_timing: dict[str, float] = {}
 
-    def track(self, frame) -> list[Detection]:
+    def track(self, frame, reset: bool = False) -> list[Detection]:
+        """`reset=True` drops ByteTrack's internal track/Kalman state before
+        this call -- required the first time a call is fed frames from a
+        different camera than the previous call, since track_ids aren't
+        namespaced per source and motion state from one camera is invalid
+        for another."""
         t_start = time.perf_counter()
         extra_kwargs = {"imgsz": self.imgsz} if self.imgsz is not None else {}
         results = self.model.track(
             frame,
-            persist=True,
+            persist=not reset,
             classes=self.classes,
             tracker=TRACKER_CONFIG,
             verbose=False,

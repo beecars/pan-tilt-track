@@ -8,3 +8,5 @@ __pycache__/
 camera_smoke_test*.jpg
 .claude/
 .gst-cache/
+captures/
+clips/

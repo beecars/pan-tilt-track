@@ -31,7 +31,7 @@ from pan_tilt_track.control.wide_handoff import (
 )
 from pan_tilt_track.dynamixel import DEFAULT_SERVO_CONFIG_PATH, PanTiltController, load_dynamixel_config
 from pan_tilt_track.dynamixel.config import clamp_position
-from pan_tilt_track.tracking.detector import ANIMAL_CLASS_IDS, YoloDetector
+from pan_tilt_track.tracking.detector import ANIMAL_CLASS_IDS, Detection, YoloDetector
 from pan_tilt_track.tracking.overlay import draw_mode_badge
 from pan_tilt_track.tracking.track_manager import TrackManager
 from pan_tilt_track.ui import LiveDashboard, PlainReporter
@@ -108,7 +108,7 @@ def main() -> int:
         "--det-imgsz",
         type=int,
         default=None,
-        help="inference resolution for both detectors (default: Ultralytics' own default, 640); "
+        help="inference resolution (default: Ultralytics' own default, 640); "
         "raising this trades more nn_inference_ms for more detail on small/distant subjects",
     )
     args = parser.parse_args()
@@ -277,14 +277,13 @@ def main() -> int:
                     reporter.log(f"[record] saved {finished_clip}")
 
         controller.initialize()
-        telephoto_detector = YoloDetector(model_path=model_path, classes=classes, imgsz=args.det_imgsz)
-        wide_detector = YoloDetector(model_path=model_path, classes=classes, imgsz=args.det_imgsz)
+        detector = YoloDetector(model_path=model_path, classes=classes, imgsz=args.det_imgsz)
         wide_track_manager = TrackManager(target_mode=target_mode)
         manual = ManualOverride()
 
         tele_loop = TrackingLoop(
             camera=telephoto_camera,
-            detector=telephoto_detector,
+            detector=detector,
             controller=controller,
             pan_gain=ProportionalGain(kp=PAN_KP, deadband_px=DEADBAND_PX),
             tilt_gain=ProportionalGain(kp=TILT_KP, deadband_px=DEADBAND_PX),
@@ -298,13 +297,10 @@ def main() -> int:
             overlay_active=(lambda: not args.rtsp_pip or pip_swapped),
         )
 
-        # Tracks which of the three modes currently owns the servo goal, so
-        # note_state() below logs once per transition rather than every
-        # frame. wide's own detection count lives here too, since it's
-        # only known inside run_acquisition_step but note_state() and the
-        # dashboard both need it every iteration, not just on a change.
         current_state: str | None = None
         last_wide_detections = 0
+        last_wide_timing: dict[str, float] = {}
+        last_detector_source: str | None = None
 
         def note_state(state: str, num_detections: int) -> None:
             nonlocal current_state
@@ -312,21 +308,24 @@ def main() -> int:
                 reporter.log(f"[state] {STATE_LABELS.get(state, state)} ({num_detections} detections)")
                 current_state = state
 
-        def run_acquisition_step() -> None:
+        def run_acquisition_step() -> Detection | None:
             """Wide-driven coarse positioning: only called when telephoto
-            currently has no lock of its own."""
-            nonlocal last_wide_detections
+            currently has no lock of its own. Returns wide's selected
+            target (or None), steering toward it first if found."""
+            nonlocal last_wide_detections, last_wide_timing, last_detector_source
             wide_frame = wide_camera.read()
             if wide_frame is None:
-                return
-            detections = wide_detector.track(wide_frame)
+                return None
+            detections = detector.track(wide_frame, reset=last_detector_source != "wide")
+            last_detector_source = "wide"
             last_wide_detections = len(detections)
+            last_wide_timing = detector.last_timing
             frame_h, frame_w = wide_frame.shape[:2]
             target = wide_track_manager.update(detections, (frame_w / 2, frame_h / 2))
             if target is None:
                 if args.verbose:
                     reporter.log(f"[wide handoff] no target ({len(detections)} detections this frame)")
-                return
+                return None
             x, y = target.target_point(target_mode)
             pan_goal, tilt_goal = wide_mapper.pixel_to_goal(x, y)
             pan_goal = clamp_position(pan_goal, config.pan_limits)
@@ -334,6 +333,7 @@ def main() -> int:
             controller.sync_write_goal_positions(pan_goal, tilt_goal)
             if args.verbose:
                 reporter.log(f"[wide handoff] goal=({pan_goal:5d}, {tilt_goal:5d})")
+            return target
 
         # Entered here, not up in the outer `with` -- camera/model setup
         # above logs plenty of its own (nvarguscamerasrc, Ultralytics
@@ -353,7 +353,28 @@ def main() -> int:
         was_locked = False
         try:
             with NonBlockingKeyReader() as keys:
-                while tele_loop.step():
+                while True:
+                    is_locked = tele_loop.track_manager.locked_track_id is not None
+
+                    if manual.enabled:
+                        ok = tele_loop.step(detect=False)
+                        state = "MANUAL"
+                    elif is_locked:
+                        ok = tele_loop.step(detect=True, reset=last_detector_source != "tele")
+                        last_detector_source = "tele"
+                        state = "HANDOFF"
+                    else:
+                        wide_target = run_acquisition_step()
+                        if wide_target is not None:
+                            ok = tele_loop.step(detect=True, reset=last_detector_source != "tele")
+                            last_detector_source = "tele"
+                            is_locked = tele_loop.track_manager.locked_track_id is not None
+                        else:
+                            ok = tele_loop.step(detect=False)
+                        state = "HANDOFF" if is_locked else "ACQUIRE"
+                    if not ok:
+                        break
+
                     key = keys.read_key()
                     manual.handle_key(key, controller)
                     if args.rtsp_pip and key == "p":
@@ -371,13 +392,6 @@ def main() -> int:
                         reporter.log(f"[record] lock acquired -- recording {CLIP_SECONDS:.0f}s clip to {recorder.start()}")
                     was_locked = is_locked
 
-                    if manual.enabled:
-                        state = "MANUAL"
-                    elif is_locked:
-                        state = "HANDOFF"
-                    else:
-                        run_acquisition_step()
-                        state = "ACQUIRE"
                     num_detections = (
                         tele_loop.last_num_detections if state == "HANDOFF" else last_wide_detections
                     )
@@ -391,8 +405,8 @@ def main() -> int:
                         state=state,
                         wide_detections=last_wide_detections,
                         tele_detections=tele_loop.last_num_detections,
-                        wide_timing=wide_detector.last_timing,
-                        tele_timing=telephoto_detector.last_timing,
+                        wide_timing=last_wide_timing,
+                        tele_timing=tele_loop.last_detect_timing,
                         tele_frame_interval_ms=tele_loop.last_frame_interval_ms,
                         pan_ticks=pan_ticks,
                         tilt_ticks=tilt_ticks,

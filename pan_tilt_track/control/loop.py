@@ -73,9 +73,17 @@ class TrackingLoop:
         # Observed loop period from the most recent step(), for callers
         # showing their own FPS/pipeline stats (e.g. LiveDashboard).
         self.last_frame_interval_ms: float | None = None
+        # detector.last_timing as of the most recent step() that actually
+        # ran detection, for callers reading it after a detector shared
+        # with another camera source has since moved on (e.g. LiveDashboard).
+        self.last_detect_timing: dict[str, float] = {}
 
-    def step(self) -> bool:
-        """Process one frame. Returns False if the camera has no frame."""
+    def step(self, detect: bool = True, reset: bool = False) -> bool:
+        """Process one frame. Returns False if the camera has no frame.
+        `detect=False` reads the frame and still drives on_frame/overlay,
+        but skips the detector call entirely -- for callers that want this
+        camera's video kept flowing without paying for inference on it.
+        `reset` is forwarded to the detector; see YoloDetector.track."""
         now = time.perf_counter()
         frame_interval_ms = (
             (now - self._last_step_time) * 1000 if self._last_step_time is not None else None
@@ -97,11 +105,16 @@ class TrackingLoop:
         height, width = frame.shape[:2]
         frame_center = (width / 2, height / 2)
 
-        detections = self.detector.track(frame)
-        detect_timing = self.detector.last_timing
-        self.last_num_detections = len(detections)
-
-        target = self.track_manager.update(detections, frame_center)
+        if detect:
+            detections = self.detector.track(frame, reset=reset)
+            detect_timing = self.detector.last_timing
+            self.last_num_detections = len(detections)
+            self.last_detect_timing = detect_timing
+            target = self.track_manager.update(detections, frame_center)
+        else:
+            detections = []
+            detect_timing = {}
+            target = None
 
         # pan_position/tilt_position stay None unless a goal is actually
         # written this frame (on_step's "moved" signal). debug_pan_position/
@@ -175,7 +188,7 @@ class TrackingLoop:
             if self.on_frame is not None:
                 self.on_frame(frame)
 
-        if self.on_step is not None:
+        if self.on_step is not None and detect:
             if target is None:
                 self.on_step(
                     {
