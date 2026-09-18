@@ -130,10 +130,6 @@ A PID profile is written to the servo's RAM control table by `PanTiltController.
 Two-stage tracking where a wide FOV camera acquires targets and hands them off to a telephoto 
 camera mounted on a pan/tile mechanism.
 
-<p align="center">
-  <img src="assets/block_diagram.svg" alt="Block diagram">
-</p>
-
 ## Architecture
 
 ```
