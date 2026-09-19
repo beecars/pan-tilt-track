@@ -1,12 +1,12 @@
 # pan-tilt-track
 
-Often in detection and tacking we are trying to balance the tradeoff between **field-of-view (FOV)** and
+Often in detection and tracking we are trying to balance the tradeoff between **field-of-view (FOV)** and
 **pixels-on-target (POT)**. A wide FOV camera can see more of the scene, but a target may only occupy a 
 few pixels. A telephoto camera can see a target in more detail, but it may not be able to see the 
 target at all if it is outside the FOV.
 
 This repository implements a prototype multi-camera target tracking platform with pan/tilt control
-to sidestep the tradeoff entirely. A fixed position wide-angle camera acquires a target (or multiple candidates), then a telephoto 
+to sidestep the tradeoff. A fixed position wide-angle camera acquires a target (or multiple candidates), then a telephoto 
 camera on a pan/tilt bracket tracks it via PID control. 
 An initial calibration step loosely maps the wide-angle camera's pixel coordinates to pan/tilt servo 
 positions, enabling target handoff to the telephoto camera. 
