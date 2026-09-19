@@ -80,33 +80,37 @@ class YoloDetector:
         model_path: str = "yolo26n.pt",
         classes: list[int] | None = None,
         imgsz: int | None = None,
+        conf: float | None = None,
     ):
         self.model = YOLO(model_path)
         cuda_available = torch.cuda.is_available()
-        if cuda_available:
+        is_pytorch_model = model_path.endswith(".pt")
+        if cuda_available and is_pytorch_model:
             self.model.to("cuda")
             device_name = torch.cuda.get_device_name(0)
             logger.info("CUDA available: %s -- inference on GPU", device_name)
-        else:
+        elif not cuda_available:
             logger.warning(
                 "CUDA NOT available (torch.cuda.is_available() is False) -- "
                 "%s will run on CPU, which is much slower than GPU inference",
                 model_path,
             )
         logger.info(
-            "Loaded %s (device=%s, torch=%s, cuda_build=%s)",
+            "Loaded %s (torch=%s, cuda_build=%s)",
             model_path,
-            next(self.model.model.parameters()).device,
             torch.__version__,
             torch.version.cuda,
         )
         self.classes = classes
-        # None leaves Ultralytics' own default (640) in effect.
+        if imgsz is not None and not is_pytorch_model:
+            logger.warning(
+                "imgsz=%s ignored for %s -- exported formats use the imgsz baked in at export time",
+                imgsz,
+                model_path,
+            )
+            imgsz = None
         self.imgsz = imgsz
-        # Per-call timing breakdown, set by track(). preprocess/nn_inference/
-        # postprocess come from Ultralytics' own timers (result.speed),
-        # which stop before the ByteTrack update runs; track_ms recovers
-        # that as the remainder of the measured wall time.
+        self.conf = conf
         self.last_timing: dict[str, float] = {}
 
     def track(self, frame, reset: bool = False) -> list[Detection]:
@@ -116,7 +120,11 @@ class YoloDetector:
         namespaced per source and motion state from one camera is invalid
         for another."""
         t_start = time.perf_counter()
-        extra_kwargs = {"imgsz": self.imgsz} if self.imgsz is not None else {}
+        extra_kwargs = {}
+        if self.imgsz is not None:
+            extra_kwargs["imgsz"] = self.imgsz
+        if self.conf is not None:
+            extra_kwargs["conf"] = self.conf
         results = self.model.track(
             frame,
             persist=not reset,

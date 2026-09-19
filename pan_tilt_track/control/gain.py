@@ -6,9 +6,6 @@ from dataclasses import dataclass
 
 @dataclass
 class ProportionalGain:
-    # No integral/derivative term: the XL330's own firmware position PID
-    # and Profile Velocity/Acceleration already smooth a goal-position
-    # write into motion.
     kp: float
     deadband_px: float
 

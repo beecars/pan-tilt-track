@@ -111,6 +111,14 @@ def main() -> int:
         help="inference resolution (default: Ultralytics' own default, 640); "
         "raising this trades more nn_inference_ms for more detail on small/distant subjects",
     )
+    parser.add_argument(
+        "--det-conf",
+        type=float,
+        default=None,
+        help="detection confidence threshold (default: Ultralytics' own default, 0.25); "
+        "raising --det-imgsz surfaces more low-confidence boxes around real objects and "
+        "background clutter, so raise this alongside it (e.g. 0.4-0.5) to filter them out",
+    )
     args = parser.parse_args()
     if args.rtsp_pip and not args.rtsp:
         parser.error("--rtsp-pip requires --rtsp")
@@ -170,6 +178,7 @@ def main() -> int:
         "mode": args.mode,
         "model": model_path,
         "imgsz": args.det_imgsz or "default",
+        "conf": args.det_conf or "default",
         "overlay": "on" if args.overlay else "off",
     }
     reporter = (
@@ -253,16 +262,10 @@ def main() -> int:
 
             if capture_pending:
                 capture_pending = False
-                # Same compositing relay.push() does below, done once more
-                # here so the saved PNG matches the stream exactly -- a
-                # capture straight off the frame avoids the RTSP path's
-                # lossy H.264 encode.
-                composited = (
-                    compose_pip(main_frame, inset_frame, scale=args.pip_scale, margin=args.pip_margin)
-                    if inset_frame is not None
-                    else main_frame
-                )
-                save_capture(composited, reporter)
+                # Fresh read: wide_frame/main_frame may already have the mode badge burned in.
+                capture_frame = wide_camera.read()
+                if capture_frame is not None:
+                    save_capture(capture_frame, reporter)
 
             if rtsp_server is not None:
                 relay.push(main_frame, inset_frame)
@@ -284,7 +287,7 @@ def main() -> int:
                     reporter.log(f"[record] saved {finished_clip}")
 
         controller.initialize()
-        detector = YoloDetector(model_path=model_path, classes=classes, imgsz=args.det_imgsz)
+        detector = YoloDetector(model_path=model_path, classes=classes, imgsz=args.det_imgsz, conf=args.det_conf)
         wide_track_manager = TrackManager(target_mode=target_mode)
         manual = ManualOverride()
 
@@ -358,7 +361,7 @@ def main() -> int:
         if args.rtsp_pip:
             reporter.log("Press 'p' to swap the RTSP main/inset cameras.")
         if rtsp_server is not None:
-            reporter.log(f"Press 'c' to save a full-res PNG of the current stream frame to {CAPTURE_DIR}/.")
+            reporter.log(f"Press 'c' to save a full-res wide-camera PNG (for later annotation) to {CAPTURE_DIR}/.")
         if recorder is not None:
             reporter.log(
                 f"Recording a {CLIP_SECONDS:.0f}s PIP clip (telephoto large, wide inset) to "

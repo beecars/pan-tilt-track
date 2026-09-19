@@ -10,8 +10,6 @@ from ..dynamixel.controller import PanTiltController
 
 MANUAL_STEP_TICKS = 20
 
-# wasd -> (pan_delta, tilt_delta) tick steps. Signs are mount-specific
-# (see gains.py's PAN_KP note) -- flip here if a/d or w/s move backwards.
 KEY_DELTAS = {
     "a": (-MANUAL_STEP_TICKS, 0),
     "d": (MANUAL_STEP_TICKS, 0),

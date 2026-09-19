@@ -52,9 +52,6 @@ class PanTiltController:
         logger.info("Connected to %s @ %d", self.config.port, self.config.baudrate)
 
     def close(self) -> None:
-        # dynamixel_sdk's closePort() assumes ser is set; guard against
-        # closing a port that never successfully opened (e.g. connect()
-        # raised before setBaudRate succeeded).
         if self.port_handler.ser is not None:
             self.port_handler.closePort()
 
@@ -141,10 +138,6 @@ class PanTiltController:
         )
 
     def write_position_i_gain(self, dxl_id: int, gain: int) -> None:
-        # Small integral term: P-only control leaves a permanent steady-
-        # state error whenever P_gain * error stays below the torque
-        # needed to break static friction -- I accumulates that residual
-        # error over time until it does.
         self._retry_comm(
             dxl_id, "write_position_i_gain", lambda: self.packet_handler.write2ByteTxRx(
                 self.port_handler, dxl_id, ADDR_POSITION_I_GAIN, gain
@@ -175,8 +168,6 @@ class PanTiltController:
                 ]
                 if not self._sync_write_goal.addParam(dxl_id, param):
                     raise DynamixelWriteError(f"sync_write addParam failed for id={dxl_id}")
-            # No per-ID error byte for a sync write - synthesize error=0 so
-            # _retry_comm's (result, error) contract still applies.
             return self._sync_write_goal.txPacket(), 0
 
         self._retry_comm(None, "sync_write_goal_positions", attempt)

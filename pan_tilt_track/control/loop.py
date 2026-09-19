@@ -40,47 +40,18 @@ class TrackingLoop:
         self.controller = controller
         self.pan_gain = pan_gain
         self.tilt_gain = tilt_gain
-        # Optional per-frame diagnostic hook, e.g. scripts/sign_check.py.
         self.on_step = on_step
-        # Optional raw-frame hook, e.g. RtspCameraServer.push_frame.
         self.on_frame = on_frame
-        # "body" (bbox center) or "head" (head keypoint centroid, falls
-        # back to body center when keypoints aren't visible).
         self.target_mode = target_mode
-        # Burns diagnostics into the frame before on_frame; adds one
-        # inference's worth of latency, so off by default.
         self.draw_overlay = draw_overlay
-        # Track identity/lifecycle (sticky lock today; see TrackManager's
-        # docstring for the ID/ReID and multi-camera fusion it's the seam
-        # for). Injectable so a future ReID-capable or multi-camera-aware
-        # manager can be swapped in without touching TrackingLoop again.
         self.track_manager = track_manager or TrackManager(target_mode=target_mode)
-        # When set and .enabled, wasd is driving the servos directly (see
-        # ManualOverride) -- step() still tracks/displays but skips its own
-        # servo writes so the two don't fight over the goal position.
         self.manual_override = manual_override
-        # Called (when set) to decide whether this frame's overlay/HUD
-        # should actually be burned in, e.g. a PIP viewer that only wants
-        # them on whichever camera is currently the large main frame --
-        # ignored unless draw_overlay is also True.
         self.overlay_active = overlay_active
-        # Wall-clock timestamp of the previous step() call, used only to
-        # compute the observed loop period for the debug HUD.
         self._last_step_time: float | None = None
-        # Detection count from the most recent step(), for callers doing
-        # their own state/handoff logging (e.g. scripts/run_tracker.py).
+
         self.last_num_detections: int = 0
-        # Observed loop period from the most recent step(), for callers
-        # showing their own FPS/pipeline stats (e.g. LiveDashboard).
         self.last_frame_interval_ms: float | None = None
-        # detector.last_timing as of the most recent step() that actually
-        # ran detection, for callers reading it after a detector shared
-        # with another camera source has since moved on (e.g. LiveDashboard).
         self.last_detect_timing: dict[str, float] = {}
-        # The target selected by the most recent detecting step() (or None
-        # if nothing was locked/selected that frame), for callers wanting
-        # its track_id/confidence without recomputing target selection
-        # (e.g. LiveDashboard's lock readout).
         self.last_target = None
 
     def step(self, detect: bool = True, reset: bool = False) -> bool:
@@ -122,9 +93,6 @@ class TrackingLoop:
             detect_timing = {}
             target = None
 
-        # pan_position/tilt_position stay None unless a goal is actually
-        # written this frame (on_step's "moved" signal). debug_pan_position/
-        # debug_tilt_position are HUD-only and also cover the idle case.
         pixel_error_x = pixel_error_y = None
         pan_delta = tilt_delta = None
         pan_position = tilt_position = None

@@ -96,6 +96,20 @@ confirmed working from inside the container.
 
 Base image: `nvcr.io/nvidia/l4t-jetpack:r36.4.0`.
 
+### TensorRT engine (optional)
+
+`--model` accepts a `.engine` file, so `YoloDetector` is TensorRT-compatible
+out of the box. Exporting one is left up to the user (`yolo export
+model=yolo26n.pt format=engine imgsz=H,W device=0`, run on-device since
+engines aren't portable across hardware/JetPack/TensorRT versions) -- match
+`imgsz` to the camera's aspect ratio rather than a plain square value, and
+raise `--det-conf` alongside a higher imgsz to compensate for the extra
+low-confidence detections that come with it.
+
+```bash
+./scripts/docker-run.sh python scripts/run_tracker.py --model yolo26n.engine --det-conf 0.45
+```
+
 ## Enclosure Design
 
 Most parts are 3D printed, with the exception of **`DYNAMIXEL H101`** and **`S102`** servo brackets
@@ -223,35 +237,14 @@ python scripts/camera_smoke_test.py --role telephoto
 python scripts/camera_smoke_test.py --role wide
 python scripts/dual_camera_smoke_test.py
 
-# One-time (or after any reassembly/remount): calibrate the wide-camera
-# handoff mapping. Walk around, visible to both cameras for at least
-# part of the session, until it collects enough samples (Ctrl+C to stop
-# early, or wait for --min-samples). Writes config/wide_handoff.json,
-# which run_tracker.py refuses to start without.
-#
-# Walk at (or around) the distance from the rig you actually expect
-# targets to be tracked at -- see Architecture above: the fit is only
-# accurate near whatever depth the calibration samples were collected
-# at, so calibrating at the wrong distance biases every later handoff.
+# One-time (or after any reassembly/remount) -- see Calibration below.
 python scripts/calibrate_wide_handoff.py
 
 # Full two-stage tracking loop: wide acquires, telephoto fine-tracks.
-# --rtsp serves the raw (telephoto) feed at rtsp://<jetson-ip>:8554/pan-tilt.
 python scripts/run_tracker.py --rtsp
 
-# Same, with the wide camera composited in as a picture-in-picture inset.
-python scripts/run_tracker.py --rtsp --rtsp-pip
-
-# Track the head instead of the body (both cameras).
-python scripts/run_tracker.py --mode head --rtsp
-
-# Animal track mode: restrict detection to COCO bird/cat/dog classes
-# (both cameras), aiming at bbox center.
-python scripts/run_tracker.py --mode animal --rtsp
-
-# Point at a different rig's config (defaults are config/cameras.json,
-# config/servos.json, and config/wide_handoff.json).
-python scripts/run_tracker.py --camera-config path/to/cameras.json --servo-config path/to/servos.json --wide-handoff-config path/to/wide_handoff.json
+# See all options (--mode, --rtsp-pip, --model, --camera-config, ...).
+python scripts/run_tracker.py --help
 ```
 
 Prefix any command with `./scripts/docker-run.sh` to run in the

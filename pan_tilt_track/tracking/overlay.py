@@ -15,7 +15,6 @@ COLOR_CROSSHAIR = (0, 165, 255)
 COLOR_ERROR = (0, 0, 255)
 COLOR_TEXT = (255, 255, 255)
 
-# Debug HUD palette, kept separate from the tracking-overlay colors above.
 HUD_FONT = cv2.FONT_HERSHEY_SIMPLEX
 HUD_SCALE_HEAD = 0.5
 HUD_SCALE = 0.42
@@ -24,8 +23,8 @@ HUD_BG_ALPHA = 0.6
 HUD_COLOR_HEAD = (255, 255, 255)
 HUD_COLOR_TEXT = (215, 215, 215)
 HUD_COLOR_DIM = (120, 120, 120)
-HUD_COLOR_WARN = (0, 165, 255)  # slowest detect-side stage this frame
-HUD_COLOR_ACCENT = (0, 220, 0)  # servo state: echoes COLOR_TARGET
+HUD_COLOR_WARN = (0, 165, 255)  
+HUD_COLOR_ACCENT = (0, 220, 0)  
 
 
 def draw_mode_badge(frame, wide_driven: bool) -> None:

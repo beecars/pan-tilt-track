@@ -10,6 +10,7 @@ from collections import deque
 from rich.console import Group
 from rich.live import Live
 from rich.panel import Panel
+from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
@@ -187,7 +188,8 @@ class LiveDashboard:
         self.rtsp_active = False
         self.pip_active = False
 
-        self._live = Live(self._render(), refresh_per_second=8, transient=False)
+        # screen=True: avoids duplicate-frame scrolling when the render is taller than the terminal.
+        self._live = Live(self._render(), refresh_per_second=8, transient=False, screen=True)
 
     def __enter__(self) -> "LiveDashboard":
         self._live.__enter__()
@@ -205,7 +207,7 @@ class LiveDashboard:
             setattr(self, key, value)
         self._live.update(self._render())
 
-    def _render(self) -> Group:
+    def _render(self) -> Panel:
         label, style = STATE_STYLE.get(self.state, (self.state, "white"))
 
         pipeline = Group(
@@ -240,17 +242,19 @@ class LiveDashboard:
             _badge("PIP", self.pip_active, "blue"),
         )
 
-        panels = [Panel(pipeline, title="pipeline (shared detector)", border_style="magenta")]
+        sections = []
         if self.run_config:
-            panels.append(self._config_panel())
-        panels.append(Panel(stats, title="pan-tilt-track", border_style="blue"))
-        panels.append(Panel(badges, border_style="grey50"))
-        panels.append(Panel(Text("\n".join(self._log) or "…", style="dim"), title="log", border_style="grey50"))
-        return Group(*panels)
-
-    def _config_panel(self) -> Panel:
-        line = "  ".join(f"{k}={v}" for k, v in self.run_config.items())
-        return Panel(Text(line, style="dim"), border_style="grey50")
+            line = "  ".join(f"{k}={v}" for k, v in self.run_config.items())
+            sections.append(Text(line, style="dim"))
+            sections.append(Rule(style="grey50"))
+        sections.append(Text("pipeline (shared detector)", style="dim italic"))
+        sections.append(pipeline)
+        sections.append(Rule(style="grey50"))
+        sections.append(stats)
+        sections.append(badges)
+        sections.append(Rule(style="grey50"))
+        sections.append(Text("\n".join(self._log) or "…", style="dim"))
+        return Panel(Group(*sections), title="pan-tilt-track", border_style="blue")
 
     def _track_row(self) -> Text:
         if self.locked_track_id is None:

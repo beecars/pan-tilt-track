@@ -48,9 +48,6 @@ def save_wide_handoff_config(
 
 class WideHandoffMapper:
     def __init__(self, calibration: WideHandoffCalibration, frame_center: tuple[float, float]):
-        # frame_center is the wide camera's (width / 2, height / 2): the
-        # calibration's *_tick_at_center fields are defined relative to it,
-        # so pixel offsets are measured from here, not from pixel (0, 0).
         self.calibration = calibration
         self.frame_center = frame_center
 

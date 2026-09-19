@@ -22,7 +22,7 @@ mkdir -p "$REPO_ROOT/captures"
 mkdir -p "$REPO_ROOT/clips"
 
 WEIGHT_MOUNT=()
-for weights in yolo26n.pt yolo26n-pose.pt; do
+for weights in yolo26n.pt yolo26n-pose.pt yolo26n.engine; do
     if [ -f "$REPO_ROOT/$weights" ]; then
         # Avoids re-downloading model weights into the container's
         # ephemeral filesystem on every run.
