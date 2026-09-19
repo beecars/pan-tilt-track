@@ -58,12 +58,15 @@ def _stage_box(name: str, value: str, border_style: str, width: int = 12) -> Pan
 def _branch_row(label: str, cam: str, timing: dict, count: int, active: bool) -> Table:
     """One branch of the fork feeding the single shared YoloDetector:
     input -> preprocess -> inference -> postprocess -> tracker. Both wide
-    and tele get their own row with their own last-known stats, but only
-    one branch is ever actually flowing through the detector at a time --
-    `active` (this frame's detect_source) picks which row lights up, so
-    the still/dim row reads as "last known, not currently running", not
-    as a second pipeline running in parallel."""
+    and tele get their own row, but only one branch is ever actually
+    flowing through the detector at a time -- `active` (this frame's
+    detect_source) picks which row lights up. The inactive row shows
+    blank ("–") stage values rather than stale last-known numbers, so it
+    reads as "not currently running", not as a second pipeline running
+    in parallel."""
     def _ms(key: str) -> str:
+        if not active:
+            return "   – "
         value = timing.get(key)
         return f"{value:5.1f}ms" if value is not None else "   – "
 
@@ -85,7 +88,7 @@ def _branch_row(label: str, cam: str, timing: dict, count: int, active: bool) ->
             cells.append(Text(" → ", style=row_style if active else "dim"))
         box_width = 14 if name == "IN" else 12
         cells.append(_stage_box(name, value, box_style, width=box_width))
-    cells.append(Text(f"  {count} det", style=row_style))
+    cells.append(Text(f"  {count if active else '–'} det", style=row_style))
     for _ in cells:
         grid.add_column(vertical="middle")
     grid.add_row(*cells)
@@ -187,6 +190,10 @@ class LiveDashboard:
         self.recording_total: float | None = None
         self.rtsp_active = False
         self.pip_active = False
+        self.rtsp_clients = 0
+        self.rtsp_fps: float | None = None
+        self.clips_saved = 0
+        self.pip_compose_ms: float | None = None
 
         # screen=True: avoids duplicate-frame scrolling when the render is taller than the terminal.
         self._live = Live(self._render(), refresh_per_second=8, transient=False, screen=True)
@@ -236,10 +243,23 @@ class LiveDashboard:
         rec_label = "REC" if self.recording_elapsed is None else (
             f"REC {self.recording_elapsed:4.1f}/{self.recording_total:.0f}s"
         )
+        if self.clips_saved:
+            rec_label += f" ({self.clips_saved} saved)"
+
+        rtsp_label = "RTSP"
+        if self.rtsp_active:
+            rtsp_label += f" {self.rtsp_clients}c"
+            if self.rtsp_fps is not None:
+                rtsp_label += f" {self.rtsp_fps:4.1f}fps"
+
+        pip_label = "PIP"
+        if self.pip_active and self.pip_compose_ms is not None:
+            pip_label += f" {self.pip_compose_ms:.1f}ms"
+
         badges.add_row(
             _badge(rec_label, self.recording, "red"),
-            _badge("RTSP", self.rtsp_active, "blue"),
-            _badge("PIP", self.pip_active, "blue"),
+            _badge(rtsp_label, self.rtsp_active, "blue"),
+            _badge(pip_label, self.pip_active, "blue"),
         )
 
         sections = []

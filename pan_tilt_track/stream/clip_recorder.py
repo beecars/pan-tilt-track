@@ -24,11 +24,13 @@ class ClipRecorder:
         self.width = width
         self.height = height
         self.framerate = framerate
-        self.max_frames = max(1, round(max_seconds * framerate))
+        self.max_seconds = max_seconds
         self.fourcc = fourcc
         self._writer: cv2.VideoWriter | None = None
         self._frame_count = 0
         self._path: Path | None = None
+        self._start_time: float | None = None
+        self.clips_saved = 0
 
     @property
     def active(self) -> bool:
@@ -36,15 +38,19 @@ class ClipRecorder:
 
     @property
     def elapsed_seconds(self) -> float:
-        return self._frame_count / self.framerate
+        return time.monotonic() - self._start_time if self._start_time is not None else 0.0
 
     @property
     def total_seconds(self) -> float:
-        return self.max_frames / self.framerate
+        return self.max_seconds
 
-    def start(self) -> Path:
+    def start(self, framerate: float | None = None) -> Path:
         """Begin a new clip, finalizing any clip already in progress
-        first. Returns the output path."""
+        first. Returns the output path. `framerate` overrides the
+        constructor's nominal camera framerate for this clip's declared
+        fps -- pass the caller's actually-observed frame rate (e.g. a
+        detection-throttled tracking loop, which runs well under the raw
+        camera rate) so the clip's playback speed matches real time."""
         if self.active:
             self.stop()
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -52,21 +58,22 @@ class ClipRecorder:
         self._writer = cv2.VideoWriter(
             str(self._path),
             cv2.VideoWriter_fourcc(*self.fourcc),
-            self.framerate,
+            framerate or self.framerate,
             (self.width, self.height),
         )
         self._frame_count = 0
+        self._start_time = time.monotonic()
         return self._path
 
     def write(self, frame) -> Path | None:
         """No-op unless a clip is in progress. Returns the finalized path
-        once the max_seconds cap is reached (auto-stopping this clip),
-        otherwise None."""
+        once max_seconds of wall-clock time has elapsed since start()
+        (auto-stopping this clip), otherwise None."""
         if not self.active:
             return None
         self._writer.write(frame)
         self._frame_count += 1
-        if self._frame_count >= self.max_frames:
+        if self.elapsed_seconds >= self.max_seconds:
             return self.stop()
         return None
 
@@ -77,4 +84,5 @@ class ClipRecorder:
         self._writer.release()
         self._writer = None
         path, self._path = self._path, None
+        self.clips_saved += 1
         return path

@@ -154,10 +154,6 @@ def main() -> int:
     wide_mapper = WideHandoffMapper(
         wide_handoff_calibration, frame_center=(wide.capture_width / 2, wide.capture_height / 2)
     )
-    # The pan/tilt range wide's own FOV can actually command, per its
-    # handoff calibration -- shown as a highlighted sub-range on the
-    # dashboard's gauges so it's clear how much of the full joint travel
-    # wide can see/steer into vs. only reachable by other means (manual).
     wide_pan_bounds = tuple(
         sorted(
             clamp_position(wide_mapper.pixel_to_goal(x, wide.capture_height / 2)[0], config.pan_limits)
@@ -213,8 +209,6 @@ def main() -> int:
                 flip_method=telephoto.flip_method,
             )
         )
-        # Always open, not just for --rtsp-pip: wide is what drives
-        # acquisition whenever telephoto has no lock.
         wide_camera = stack.enter_context(
             GStreamerCameraSource(
                 sensor_id=wide.sensor_id,
@@ -237,10 +231,7 @@ def main() -> int:
             if args.record
             else None
         )
-        # Toggled by 'p' below; both cameras capture at the same resolution
-        # so either can be the RTSP appsrc's fixed-caps main frame.
         pip_swapped = False
-        # Set by 'c' below; consumed by the next on_frame call.
         capture_pending = False
 
         def on_frame(frame) -> None:
@@ -258,7 +249,6 @@ def main() -> int:
 
             if capture_pending:
                 capture_pending = False
-                # Fresh read: wide_frame/main_frame may already have the mode badge burned in.
                 capture_frame = wide_camera.read()
                 if capture_frame is not None:
                     save_capture(capture_frame, reporter)
@@ -381,7 +371,13 @@ def main() -> int:
 
                     is_locked = tele_loop.track_manager.locked_track_id is not None
                     if recorder is not None and is_locked and not was_locked and not recorder.active:
-                        reporter.log(f"[record] lock acquired -- recording {CLIP_SECONDS:.0f}s clip to {recorder.start()}")
+                        measured_fps = (
+                            1000 / tele_loop.last_frame_interval_ms
+                            if tele_loop.last_frame_interval_ms
+                            else telephoto.framerate
+                        )
+                        clip_path = recorder.start(framerate=measured_fps)
+                        reporter.log(f"[record] lock acquired -- recording {CLIP_SECONDS:.0f}s clip to {clip_path}")
                     was_locked = is_locked
 
                     num_detections = (
@@ -411,6 +407,10 @@ def main() -> int:
                         recording_total=recorder.total_seconds if recorder is not None and recorder.active else None,
                         rtsp_active=rtsp_server is not None,
                         pip_active=args.rtsp_pip,
+                        rtsp_clients=rtsp_server.stats()["clients"] if rtsp_server is not None else 0,
+                        rtsp_fps=rtsp_server.stats()["fps"] if rtsp_server is not None else None,
+                        clips_saved=recorder.clips_saved if recorder is not None else 0,
+                        pip_compose_ms=relay.last_compose_ms if relay is not None else None,
                     )
         except KeyboardInterrupt:
             reporter.log("Stopping")

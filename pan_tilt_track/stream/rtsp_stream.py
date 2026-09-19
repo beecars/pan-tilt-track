@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 
 import gi
 
@@ -42,9 +43,13 @@ class RtspCameraServer:
         self.mount_point = mount_point
         self._appsrc = None
         self._frame_count = 0
+        self._client_count = 0
+        self._last_push_time: float | None = None
+        self._push_fps: float | None = None
 
         self._server = GstRtspServer.RTSPServer()
         self._server.set_service(port)
+        self._server.connect("client-connected", self._on_client_connected)
 
         factory = GstRtspServer.RTSPMediaFactory()
         factory.set_launch(
@@ -81,12 +86,33 @@ class RtspCameraServer:
     def _on_media_unprepared(self, media) -> None:
         self._appsrc = None
 
+    def _on_client_connected(self, server, client) -> None:
+        self._client_count += 1
+        client.connect("closed", self._on_client_closed)
+
+    def _on_client_closed(self, client) -> None:
+        self._client_count = max(0, self._client_count - 1)
+
+    def stats(self) -> dict:
+        """Minimal live RTSP stats for display: connected client count and
+        instantaneous push fps (None if nobody's currently watching)."""
+        return {
+            "clients": self._client_count,
+            "fps": self._push_fps if self._appsrc is not None else None,
+        }
+
     def push_frame(self, frame) -> None:
         """Feed one BGR frame (matching the constructor's width/height) to
         any connected RTSP client. No-op if nobody's watching."""
         appsrc = self._appsrc
         if appsrc is None:
             return
+        now = time.monotonic()
+        if self._last_push_time is not None:
+            dt = now - self._last_push_time
+            if dt > 0:
+                self._push_fps = 1.0 / dt
+        self._last_push_time = now
         duration = Gst.util_uint64_scale_int(Gst.SECOND, 1, self.framerate)
         buf = Gst.Buffer.new_wrapped(frame.tobytes())
         buf.pts = self._frame_count * duration
