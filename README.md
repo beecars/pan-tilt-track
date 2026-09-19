@@ -18,7 +18,7 @@ Intended features not yet implemented:
 
 ```
 pan_tilt_track/
-├── dynamixel/
+├── dynamixel/           == ROBOTIS DYNAMIXEL SDK WRAPPER FOR SERVOS ==
 │   ├── controller.py    PanTiltController: dynamixel_sdk wrapper owning
 │   │                    the port/packet handlers and RAM writes (torque,
 │   │                    profile velocity/acceleration, goal position).
@@ -26,7 +26,7 @@ pan_tilt_track/
 │                        (port, IDs, joint limits/profile); loads from
 │                        config/servos.json.
 │
-├── tracking/
+├── tracking/            == DETECTION + TRACKING LOGIC ==
 │   ├── detector.py      YoloDetector: wraps Ultralytics YOLO's track()
 │   │                    with ByteTrack; accepts detection or pose
 │   │                    (`*-pose.pt`) models for box/keypoint output.
@@ -38,19 +38,25 @@ pan_tilt_track/
 │                        locked-target highlight, crosshair, deadband
 │                        boundary, current pixel-error vector.
 │
-├── control/
+├── control/             == PAN/TILT CONTROL LOOP ==
 │   ├── gain.py          ProportionalGain: goal-position tick delta from
 │   │                    pixel error, with a deadband.
 │   ├── gains.py         Tuned pan/tilt gain constants, shared by
 │   │                    run_tracker.py and sign_check.py.
+│   ├── keyboard.py      NonBlockingKeyReader: non-blocking single-key
+│   │                    stdin reads (cbreak mode) for interactive
+│   │                    scripts.
 │   ├── loop.py          TrackingLoop: wires camera -> detector ->
 │   │                    target selection -> gain -> sync-write goal
 │   │                    positions.
+│   ├── manual.py        ManualOverride: 'm'-toggled wasd manual pan/tilt
+│   │                    nudge; TrackingLoop skips its own writes while
+│   │                    it's active.
 │   └── wide_handoff.py  WideHandoffMapper: loads/saves wide-pixel ->
 │                        goal-tick calibration (config/wide_handoff.json)
 │                        and maps a pixel to an absolute goal position.
 │
-├── camera/
+├── camera/                  == CAMERA CAPTURE & CONFIG ==
 │   ├── source.py            CameraSource protocol: read() + release().
 │   ├── gstreamer_source.py  nvarguscamerasrc capture for the IMX477;
 │   │                        builds the GStreamer pipeline, converts
@@ -58,13 +64,22 @@ pan_tilt_track/
 │   └── config.py             Per-rig camera config: sensor id, capture
 │                            mode, mount orientation (wide/telephoto).
 │
-└── stream/
-    ├── pip_compositor.py  Composites a smaller inset frame onto a larger
-    │                      main frame (picture-in-picture).
-    ├── pip_relay.py       Composites an optional inset onto a main frame
-    │                      and pushes the result to an RtspCameraServer.
-    └── rtsp_stream.py     RtspCameraServer: re-serves already-captured
-                           BGR frames over RTSP via an appsrc pipeline.
+├── stream/               == RTSP STREAMING & RECORDING ==
+│   ├── clip_recorder.py  ClipRecorder: writes frames into a fixed-length
+│   │                     local MP4 clip for headless recording
+│   │                     (--record in run_tracker.py).
+│   ├── pip_compositor.py  Composites a smaller inset frame onto a larger
+│   │                      main frame (picture-in-picture).
+│   ├── pip_relay.py       Composites an optional inset onto a main frame
+│   │                      and pushes the result to an RtspCameraServer.
+│   └── rtsp_stream.py     RtspCameraServer: re-serves already-captured
+│                          BGR frames over RTSP via an appsrc pipeline.
+│
+└── ui/               == CLI-BASED DASHBOARD ==
+    └── dashboard.py  LiveDashboard / PlainReporter: rich-based live CLI
+                       status view for run_tracker.py (acquire/handoff
+                       state, detection counts, pan/tilt position); the
+                       --plain fallback just prints lines.
 ```
 
 `TrackManager`'s independent per-camera instances are never ID-correlated
@@ -259,6 +274,10 @@ Other scripts:
 - `scripts/rtsp_server.py` / `scripts/dual_camera_rtsp_pip.py`:
   camera-only RTSP viewers (single feed, or wide+telephoto PIP) with no
   servo/detection dependency, for checking framing/focus cheaply.
+- `scripts/setup_ftdi_latency.sh`: one-time fix for the U2D2's FTDI
+  latency timer (defaults to 16ms, capping round-trip rate near 60Hz);
+  installs a udev rule so it persists across reboots/replugs and adds
+  the invoking user to `dialout`.
 
 ## Tests
 
