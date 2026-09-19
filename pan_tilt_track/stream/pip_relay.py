@@ -8,8 +8,6 @@ from .rtsp_stream import RtspCameraServer
 
 
 class PipRtspRelay:
-    # Frame acquisition is the caller's responsibility: this class only
-    # composites and pushes whatever frames it's handed.
     def __init__(self, rtsp_server: RtspCameraServer, scale: float = 0.25, margin: int = 16):
         self.rtsp_server = rtsp_server
         self.scale = scale
