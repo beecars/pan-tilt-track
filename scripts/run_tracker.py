@@ -117,10 +117,7 @@ def main() -> int:
         default=None,
         help="detection confidence threshold (default: 0.1, set by Ultralytics' model.track() "
         "to match bytetrack.yaml's track_low_thresh so ByteTrack gets low-confidence boxes for "
-        "its second-stage association); raising this above track_low_thresh (0.1) starves that "
-        "recovery pass, so only raise it (e.g. 0.4-0.5) to cut noise/CPU load when tracking "
-        "quality matters less than throughput, and raise --det-imgsz alongside it if doing so "
-        "surfaces more low-confidence boxes around real objects and background clutter",
+        "its second-stage association)",
     )
     args = parser.parse_args()
     if args.rtsp_pip and not args.rtsp:
