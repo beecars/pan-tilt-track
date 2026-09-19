@@ -127,6 +127,33 @@ short video below shows the basic assembly and mechanical operation.
 
 Jetson Orin Nano Super Developer Kit. `L4T 36.5.0` / `JetPack 6.2`. `MAXN` power mode. 
 
+### Servos
+
+2x **`ROBOTIS DYNAMIXEL XL330`** w/ **`ROBOTIS U2D2`** USB-to-TTL adapter (assumed to be on 
+`/dev/ttyUSB0`).
+
+
+| Joint | ID | Range |
+| --- | --- | --- |
+| Pan | 1 | ≈269° |
+| Tilt | 2 | ≈105°, one-sided from mechanical center |
+
+Port/baudrate/IDs/joint limits are in`config/servos.json` (also see 
+`pan_tilt_track/dynamixel/config.py`).
+
+#### Position PID / profile tuning
+
+A PID profile is written to the servo's RAM control table by `PanTiltController.initialize()` on 
+**every startup**.
+
+| Joint | profile_velocity | profile_acceleration | position_p_gain | position_i_gain |
+| --- | --- | --- | --- | --- |
+| Pan | 200 | 30 | 400 (default) | 30 |
+| Tilt | 200 | 30 | 800 | 60 |
+
+>*Note: If other servos or cameras are used, the above values may need to be re-tuned. The 
+`scripts/init_servos.py` script can be used to write new values to the servos' RAM. For the listed hardware, integral gain is needed to counteract gravity on the tilt axis. It was also found to help with friction and/or larger moment on the pan axis.*
+
 ### Cameras
 This project was validated with (2x) **`Arducam IMX477`** CSI sensors. Other 
 Jetson-compatible cameras may also work, but it is important to check with the manufacturer if the
@@ -193,34 +220,6 @@ sees exactly one detection. The coverage map buckets recorded samples
 by their position in the wide frame (`o` = 1-2 samples in that cell, `#` = 3+). This gives a quick 
 visual check on the distribution of samples across the wide frame. The calibration will stop 
 automatically once the minimum number of samples is reached, or can be stopped early with Ctrl+C.
-
-### Servos
-
-2x **`ROBOTIS DYNAMIXEL XL330`** w/ **`ROBOTIS U2D2`** USB-to-TTL adapter (assumed to be on 
-`/dev/ttyUSB0`).
-
-
-| Joint | ID | Range |
-| --- | --- | --- |
-| Pan | 1 | ≈269° |
-| Tilt | 2 | ≈105°, one-sided from mechanical center |
-
-Port/baudrate/IDs/joint limits are in`config/servos.json` (also see 
-`pan_tilt_track/dynamixel/config.py`).
-
-#### Position PID / profile tuning
-
-A PID profile is written to the servo's RAM control table by `PanTiltController.initialize()` on 
-**every startup**.
-
-| Joint | profile_velocity | profile_acceleration | position_p_gain | position_i_gain |
-| --- | --- | --- | --- | --- |
-| Pan | 200 | 30 | 400 (default) | 30 |
-| Tilt | 200 | 30 | 800 | 60 |
-
->*Note: If other servos or cameras are used, the above values may need to be re-tuned. The 
-`scripts/init_servos.py` script can be used to write new values to the servos' RAM. For the listed hardware, integral gain is needed to counteract gravity on the tilt axis. It was also found to help with friction and/or larger moment on the pan axis.*
-
 
 ## Usage
 
