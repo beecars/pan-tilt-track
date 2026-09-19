@@ -125,8 +125,6 @@ def main() -> int:
     args = parser.parse_args()
     if args.rtsp_pip and not args.rtsp:
         parser.error("--rtsp-pip requires --rtsp")
-    # rich's Live assumes a real terminal; fall back automatically for a
-    # piped/logged run even if --plain wasn't passed.
     plain = args.plain or not sys.stdout.isatty()
 
     target_mode = "head" if args.mode == "head" else "body"
@@ -146,8 +144,6 @@ def main() -> int:
 
     rtsp_server = None
     if args.rtsp:
-        # The RTSP feed's dims are the wide camera's when compositing PIP
-        # (it's the background frame), otherwise the tracking camera's.
         rtsp_dims = wide if args.rtsp_pip else telephoto
         rtsp_server = RtspCameraServer(
             width=rtsp_dims.capture_width,
@@ -274,10 +270,6 @@ def main() -> int:
                 relay.push(main_frame, inset_frame)
 
             if recorder is not None and recorder.active:
-                # Clips are always telephoto-large / wide-inset, independent
-                # of the RTSP pip_swapped toggle above -- when args.rtsp_pip
-                # put wide in `main_frame` instead, `frame` (telephoto) still
-                # needs its own badge burned in.
                 if frame is not main_frame:
                     draw_mode_badge(frame, wide_driven=tele_loop.track_manager.locked_track_id is None)
                 clip_frame = (
@@ -305,19 +297,10 @@ def main() -> int:
             target_mode=target_mode,
             draw_overlay=args.overlay,
             manual_override=manual,
-            # Never burn the HUD into the pip inset: skip it whenever
-            # telephoto isn't currently the large main frame.
             overlay_active=(lambda: not args.rtsp_pip or pip_swapped),
         )
 
         current_state: str | None = None
-        # Which camera the single shared `detector` most recently ran on --
-        # there's only ever one detector pipeline in flight, interleaved
-        # between wide (ACQUIRE) and tele (HANDOFF), not two running in
-        # parallel; this is the fork's "which branch is live" indicator.
-        # wide/tele each also keep their own last-known timing/count, since
-        # whichever branch isn't currently running still shows what it saw
-        # last time it did.
         last_detector_source: str | None = None
         wide_timing: dict[str, float] = {}
         wide_detections = 0
@@ -355,10 +338,6 @@ def main() -> int:
                 reporter.log(f"[wide handoff] goal=({pan_goal:5d}, {tilt_goal:5d})")
             return target
 
-        # Entered here, not up in the outer `with` -- camera/model setup
-        # above logs plenty of its own (nvarguscamerasrc, Ultralytics
-        # weight loading) that must land as normal scrolling output, not
-        # get fought over by the Live-managed region below.
         reporter.__enter__()
         reporter.log("Press 'm' to toggle manual pan/tilt override, then wasd to steer.")
         if args.rtsp_pip:
@@ -405,10 +384,6 @@ def main() -> int:
 
                     is_locked = tele_loop.track_manager.locked_track_id is not None
                     if recorder is not None and is_locked and not was_locked and not recorder.active:
-                        # not recorder.active: a brief lock flicker (dropped
-                        # detection, ByteTrack ID churn) shouldn't truncate
-                        # an in-progress clip and restart a new one -- let
-                        # it run to its natural 10s end instead.
                         reporter.log(f"[record] lock acquired -- recording {CLIP_SECONDS:.0f}s clip to {recorder.start()}")
                     was_locked = is_locked
 
