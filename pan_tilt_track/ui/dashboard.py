@@ -55,15 +55,19 @@ def _stage_box(name: str, value: str, border_style: str, width: int = 12) -> Pan
     )
 
 
-def _branch_row(label: str, cam: str, timing: dict, count: int, active: bool) -> Table:
+def _branch_row(
+    label: str, cam: str, timing: dict, count: int, active: bool, downsample: str | None = None
+) -> Table:
     """One branch of the fork feeding the single shared YoloDetector:
-    input -> preprocess -> inference -> postprocess -> tracker. Both wide
-    and tele get their own row, but only one branch is ever actually
-    flowing through the detector at a time -- `active` (this frame's
-    detect_source) picks which row lights up. The inactive row shows
-    blank ("–") stage values rather than stale last-known numbers, so it
-    reads as "not currently running", not as a second pipeline running
-    in parallel."""
+    input -> [downsample] -> preprocess -> inference -> postprocess ->
+    tracker. Both wide and tele get their own row, but only one branch is
+    ever actually flowing through the detector at a time -- `active`
+    (this frame's detect_source) picks which row lights up. The inactive
+    row shows blank ("–") stage values rather than stale last-known
+    numbers, so it reads as "not currently running", not as a second
+    pipeline running in parallel. `downsample` (target resolution) adds a
+    DOWN stage after IN when that branch's camera captures at a different
+    resolution than the pipeline processes."""
     def _ms(key: str) -> str:
         if not active:
             return "   – "
@@ -74,8 +78,10 @@ def _branch_row(label: str, cam: str, timing: dict, count: int, active: bool) ->
     box_style = "cyan" if active else "grey50"
     arrow = "▶" if active else " "
 
-    stages = [
-        ("IN", cam),
+    stages = [("IN", cam)]
+    if downsample:
+        stages.append(("DOWN", downsample))
+    stages += [
         ("PRE", _ms("preprocess_ms")),
         ("INFER", _ms("nn_inference_ms")),
         ("POST", _ms("postprocess_ms")),
@@ -152,29 +158,22 @@ class LiveDashboard:
         run_config: dict | None = None,
         wide_cam: str = "wide",
         tele_cam: str = "tele",
+        wide_downsample: str | None = None,
         wide_pan_bounds: tuple[int, int] | None = None,
         wide_tilt_bounds: tuple[int, int] | None = None,
         max_log_lines: int = 10,
     ):
         self.pan_limits = pan_limits
         self.tilt_limits = tilt_limits
-        # Static summary of this run's CLI flags (mode, model, overlay/
-        # rtsp/pip, ...) -- see scripts/run_tracker.py -- shown once in a
-        # header line so it's visible without scrolling back to startup
-        # logs.
         self.run_config = run_config or {}
         self.wide_cam = wide_cam
         self.tele_cam = tele_cam
-        # The pan/tilt sub-range wide's own FOV can command, per its
-        # handoff calibration -- highlighted on the gauges below so it's
-        # clear how much of the full joint travel wide can steer into.
+        self.wide_downsample = wide_downsample
         self.wide_pan_bounds = wide_pan_bounds
         self.wide_tilt_bounds = wide_tilt_bounds
         self._log: deque[str] = deque(maxlen=max_log_lines)
 
         self.state = "STARTING"
-        # Which branch actually fed the shared detector this frame --
-        # drives the fork's arrow/highlight.
         self.detect_source: str | None = None
         self.wide_timing: dict = {}
         self.tele_timing: dict = {}
@@ -195,7 +194,6 @@ class LiveDashboard:
         self.clips_saved = 0
         self.pip_compose_ms: float | None = None
 
-        # screen=True: avoids duplicate-frame scrolling when the render is taller than the terminal.
         self._live = Live(self._render(), refresh_per_second=8, transient=False, screen=True)
 
     def __enter__(self) -> "LiveDashboard":
@@ -220,7 +218,7 @@ class LiveDashboard:
         pipeline = Group(
             _branch_row(
                 "WIDE", self.wide_cam, self.wide_timing, self.wide_detections,
-                active=self.detect_source == "wide",
+                active=self.detect_source == "wide", downsample=self.wide_downsample,
             ),
             _branch_row(
                 "TELE", self.tele_cam, self.tele_timing, self.tele_detections,

@@ -73,7 +73,7 @@ class YoloDetector:
         self,
         model_path: str = "yolo26n.pt",
         classes: list[int] | None = None,
-        imgsz: int | None = None,
+        imgsz: int | list[int] | None = None,
         conf: float | None = None,
     ):
         self.model = YOLO(model_path)

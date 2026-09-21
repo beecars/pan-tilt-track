@@ -44,13 +44,59 @@ CLIP_SECONDS = 10.0
 STATE_LABELS = {"MANUAL": "MANUAL", "ACQUIRE": "ACQUIRE (wide)", "HANDOFF": "HANDOFF (tele)"}
 
 
-def save_capture(frame, reporter) -> None:
-    """Writes `frame` -- exactly what's being streamed, badge/overlay/pip
-    inset and all -- as a lossless PNG at its native resolution."""
+def parse_imgsz(value: str) -> int | list[int]:
+    """--det-imgsz value: a bare int for square inference, or "H,W" for
+    rect inference at a non-square aspect (avoids the wasted padding a
+    square imgsz forces on a 16:9 frame). Only meaningful for a .pt model
+    -- YoloDetector ignores imgsz entirely for exported formats, whose
+    shape is fixed at export time."""
+    if "," in value:
+        parts = value.split(",")
+        if len(parts) != 2:
+            raise argparse.ArgumentTypeError(f"--det-imgsz rect form must be 'H,W', got {value!r}")
+        try:
+            return [int(p) for p in parts]
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"--det-imgsz rect form must be 'H,W' integers, got {value!r}") from None
+    return int(value)
+
+
+def downsample_to(frame, size: tuple[int, int]):
+    """Resizes `frame` to `size` (w, h) if it isn't already, for feeding the
+    detector/RTSP at the wide-handoff calibration's resolution regardless of
+    the camera's actual capture resolution."""
+    if frame is None or (frame.shape[1], frame.shape[0]) == size:
+        return frame
+    return cv2.resize(frame, size, interpolation=cv2.INTER_AREA)
+
+
+def save_capture(frame, reporter, prefix: str = "capture") -> Path:
+    """Writes the raw wide-camera `frame` (no overlay) as a lossless PNG."""
     CAPTURE_DIR.mkdir(exist_ok=True)
-    path = CAPTURE_DIR / f"capture_{time.strftime('%Y%m%d_%H%M%S')}.png"
+    ms = int((time.time() % 1) * 1000)
+    path = CAPTURE_DIR / f"{prefix}_{time.strftime('%Y%m%d_%H%M%S')}_{ms:03d}.png"
     cv2.imwrite(str(path), frame)
     reporter.log(f"[capture] saved {path}")
+    return path
+
+
+def save_yolo_labels(detections, frame_size: tuple[int, int], png_path: Path) -> None:
+    """Writes a YOLO-format .txt label file next to `png_path` (same stem):
+    one "class_id x_center y_center width height" line per detection,
+    normalized 0-1 against `frame_size` (the frame the detector actually
+    ran on). Normalized coordinates carry over unchanged to `png_path`
+    even when it's a different (e.g. native 4K) resolution, since resizing
+    scales each axis by a uniform fraction."""
+    frame_w, frame_h = frame_size
+    lines = []
+    for det in detections:
+        x1, y1, x2, y2 = det.box
+        xc = (x1 + x2) / 2 / frame_w
+        yc = (y1 + y2) / 2 / frame_h
+        w = (x2 - x1) / frame_w
+        h = (y2 - y1) / frame_h
+        lines.append(f"{det.class_id} {xc:.6f} {yc:.6f} {w:.6f} {h:.6f}")
+    png_path.with_suffix(".txt").write_text("\n".join(lines) + ("\n" if lines else ""))
 
 
 def main() -> int:
@@ -63,6 +109,27 @@ def main() -> int:
         help="burn detection boxes / crosshair / error vector into the RTSP feed (adds latency)",
     )
     parser.add_argument("--camera-config", default=DEFAULT_CAMERA_CONFIG_PATH)
+    parser.add_argument(
+        "--wide-capture-width",
+        type=int,
+        default=None,
+        help="override the wide camera's Argus sensor-mode width (e.g. 3840 for 4K); detection runs "
+        "on the native frame (see --det-imgsz), only the RTSP/PIP inset is downsampled to the "
+        "camera-config resolution",
+    )
+    parser.add_argument(
+        "--wide-capture-height",
+        type=int,
+        default=None,
+        help="override the wide camera's Argus sensor-mode height (e.g. 2160 for 4K)",
+    )
+    parser.add_argument(
+        "--wide-capture-framerate",
+        type=int,
+        default=None,
+        help="override the wide camera's Argus sensor-mode framerate (sensor modes pair fixed "
+        "resolutions with fixed framerates, e.g. this sensor's 4K mode is ~30fps vs 1080p's ~60fps)",
+    )
     parser.add_argument("--servo-config", default=DEFAULT_SERVO_CONFIG_PATH)
     parser.add_argument("--wide-handoff-config", default=DEFAULT_WIDE_HANDOFF_CONFIG_PATH)
     parser.add_argument(
@@ -79,6 +146,20 @@ def main() -> int:
         "wide inset) to disk; works with or without --rtsp",
     )
     parser.add_argument("--clips-dir", default="clips", help="output directory for --record clips")
+    parser.add_argument(
+        "--capture-interval",
+        type=float,
+        default=None,
+        help=f"auto-save a raw wide-camera PNG to {CAPTURE_DIR}/ every N seconds, regardless of detections "
+        "(dataset collection)",
+    )
+    parser.add_argument(
+        "--capture-on-detect-interval",
+        type=float,
+        default=None,
+        help=f"auto-save a raw wide-camera PNG to {CAPTURE_DIR}/ at most every N seconds while the wide "
+        "camera has a detection, alongside a same-named YOLO-format .txt label file (dataset collection)",
+    )
     parser.add_argument("--model", default=None, help="default: yolo26n.pt, or yolo26n-pose.pt for --mode head")
     parser.add_argument(
         "--classes",
@@ -96,6 +177,12 @@ def main() -> int:
         "restricted to COCO bird/cat/dog classes.",
     )
     parser.add_argument(
+        "--wide-only",
+        action="store_true",
+        help="never hand off to the telephoto camera; stay in wide-driven ACQUIRE steering "
+        "continuously (telephoto still opens/streams for --rtsp/--record, just never steers)",
+    )
+    parser.add_argument(
         "--verbose", action="store_true", help="print per-frame pixel error / goal position"
     )
     parser.add_argument(
@@ -106,10 +193,12 @@ def main() -> int:
     )
     parser.add_argument(
         "--det-imgsz",
-        type=int,
+        type=parse_imgsz,
         default=None,
-        help="inference resolution (default: Ultralytics' own default, 640); "
-        "raising this trades more nn_inference_ms for more detail on small/distant subjects",
+        help="inference resolution: a bare int for square (default: Ultralytics' own default, 640), "
+        "or 'H,W' for rect (e.g. 2176,3840 to match a 16:9 4K frame without wasteful square padding). "
+        "Raising this trades more nn_inference_ms for more detail on small/distant subjects; "
+        "ignored entirely for exported (.engine) models, whose shape is fixed at export time",
     )
     parser.add_argument(
         "--det-conf",
@@ -138,6 +227,12 @@ def main() -> int:
     model_path = args.model or ("yolo26n-pose.pt" if args.mode == "head" else "yolo26n.pt")
     cameras = load_cameras_config(args.camera_config)
     telephoto, wide = cameras.telephoto, cameras.wide
+    wide_processing_size = (wide.capture_width, wide.capture_height)
+    wide_capture_size = (
+        args.wide_capture_width or wide.capture_width,
+        args.wide_capture_height or wide.capture_height,
+    )
+    wide_cam_label = f"{wide_capture_size[0]}x{wide_capture_size[1]}"
 
     rtsp_server = None
     if args.rtsp:
@@ -172,6 +267,7 @@ def main() -> int:
         "imgsz": args.det_imgsz or "default",
         "conf": args.det_conf or "default",
         "overlay": "on" if args.overlay else "off",
+        "handoff": "off" if args.wide_only else "on",
     }
     reporter = (
         PlainReporter()
@@ -180,7 +276,7 @@ def main() -> int:
             config.pan_limits,
             config.tilt_limits,
             run_config=run_config,
-            wide_cam=f"{wide.capture_width}x{wide.capture_height}",
+            wide_cam=wide_cam_label,
             tele_cam=f"{telephoto.capture_width}x{telephoto.capture_height}",
             wide_pan_bounds=wide_pan_bounds,
             wide_tilt_bounds=wide_tilt_bounds,
@@ -212,9 +308,9 @@ def main() -> int:
         wide_camera = stack.enter_context(
             GStreamerCameraSource(
                 sensor_id=wide.sensor_id,
-                capture_width=wide.capture_width,
-                capture_height=wide.capture_height,
-                framerate=wide.framerate,
+                capture_width=wide_capture_size[0],
+                capture_height=wide_capture_size[1],
+                framerate=args.wide_capture_framerate or wide.framerate,
                 flip_method=wide.flip_method,
             )
         )
@@ -232,13 +328,11 @@ def main() -> int:
             else None
         )
         pip_swapped = False
-        capture_pending = False
 
         def on_frame(frame) -> None:
-            nonlocal capture_pending
             wide_frame = None
             if args.rtsp_pip or (recorder is not None and recorder.active):
-                wide_frame = wide_camera.read()
+                wide_frame = downsample_to(wide_camera.read(), wide_processing_size)
 
             main_frame, inset_frame = frame, None
             if args.rtsp_pip and wide_frame is not None:
@@ -246,12 +340,6 @@ def main() -> int:
                     (frame, wide_frame) if pip_swapped else (wide_frame, frame)
                 )
             draw_mode_badge(main_frame, wide_driven=tele_loop.track_manager.locked_track_id is None)
-
-            if capture_pending:
-                capture_pending = False
-                capture_frame = wide_camera.read()
-                if capture_frame is not None:
-                    save_capture(capture_frame, reporter)
 
             if rtsp_server is not None:
                 relay.push(main_frame, inset_frame)
@@ -291,6 +379,8 @@ def main() -> int:
         last_detector_source: str | None = None
         wide_timing: dict[str, float] = {}
         wide_detections = 0
+        last_wide_detections: list[Detection] = []
+        last_wide_frame_size = wide_capture_size
 
         def note_state(state: str, num_detections: int) -> None:
             nonlocal current_state
@@ -302,21 +392,31 @@ def main() -> int:
             """Wide-driven coarse positioning: only called when telephoto
             currently has no lock of its own. Returns wide's selected
             target (or None), steering toward it first if found."""
-            nonlocal last_detector_source, wide_timing, wide_detections
+            nonlocal last_detector_source, wide_timing, wide_detections, last_wide_detections, last_wide_frame_size
+            # Detection runs on the frame at its native capture resolution --
+            # Ultralytics letterboxes to whatever the model/engine needs
+            # internally regardless of input size, so there's no need to
+            # pre-resize. Target coordinates are rescaled to
+            # wide_processing_size (wide_handoff's calibration resolution)
+            # below, rather than resizing the image itself.
             wide_frame = wide_camera.read()
             if wide_frame is None:
                 return None
             detections = detector.track(wide_frame, reset=last_detector_source != "wide")
             last_detector_source = "wide"
             wide_detections = len(detections)
-            wide_timing = detector.last_timing
+            last_wide_detections = detections
             frame_h, frame_w = wide_frame.shape[:2]
+            last_wide_frame_size = (frame_w, frame_h)
+            wide_timing = detector.last_timing
             target = wide_track_manager.update(detections, (frame_w / 2, frame_h / 2))
             if target is None:
                 if args.verbose:
                     reporter.log(f"[wide handoff] no target ({len(detections)} detections this frame)")
                 return None
             x, y = target.target_point(target_mode)
+            x *= wide_processing_size[0] / frame_w
+            y *= wide_processing_size[1] / frame_h
             pan_goal, tilt_goal = wide_mapper.pixel_to_goal(x, y)
             pan_goal = clamp_position(pan_goal, config.pan_limits)
             tilt_goal = clamp_position(tilt_goal, config.tilt_limits)
@@ -329,14 +429,29 @@ def main() -> int:
         reporter.log("Press 'm' to toggle manual pan/tilt override, then wasd to steer.")
         if args.rtsp_pip:
             reporter.log("Press 'p' to swap the RTSP main/inset cameras.")
-        if rtsp_server is not None:
-            reporter.log(f"Press 'c' to save a full-res wide-camera PNG (for later annotation) to {CAPTURE_DIR}/.")
+        reporter.log(f"Press 'c' to save a full-res wide-camera PNG (for later annotation) to {CAPTURE_DIR}/.")
+        if wide_capture_size != wide_processing_size:
+            reporter.log(
+                f"[wide] capturing at {wide_capture_size[0]}x{wide_capture_size[1]}; detection runs at "
+                "native resolution (target coords rescaled to "
+                f"{wide_processing_size[0]}x{wide_processing_size[1]} for wide_handoff); the RTSP/PIP "
+                f"inset is downsampled to {wide_processing_size[0]}x{wide_processing_size[1]}."
+            )
+        if args.capture_interval:
+            reporter.log(f"Auto-saving a wide-camera PNG to {CAPTURE_DIR}/ every {args.capture_interval:.0f}s.")
+        if args.capture_on_detect_interval:
+            reporter.log(
+                f"Auto-saving a wide-camera PNG + YOLO .txt labels to {CAPTURE_DIR}/ (max every "
+                f"{args.capture_on_detect_interval:.0f}s) while the wide camera has a detection."
+            )
         if recorder is not None:
             reporter.log(
                 f"Recording a {CLIP_SECONDS:.0f}s PIP clip (telephoto large, wide inset) to "
                 f"{args.clips_dir}/ each time telephoto acquires a lock."
             )
         was_locked = False
+        last_interval_capture = 0.0
+        last_detect_capture = 0.0
         try:
             with NonBlockingKeyReader() as keys:
                 while True:
@@ -351,7 +466,7 @@ def main() -> int:
                         state = "HANDOFF"
                     else:
                         wide_target = run_acquisition_step()
-                        if wide_target is not None:
+                        if wide_target is not None and not args.wide_only:
                             ok = tele_loop.step(detect=True, reset=last_detector_source != "tele")
                             last_detector_source = "tele"
                             is_locked = tele_loop.track_manager.locked_track_id is not None
@@ -366,8 +481,10 @@ def main() -> int:
                     if args.rtsp_pip and key == "p":
                         pip_swapped = not pip_swapped
                         reporter.log(f"[pip] main={'telephoto' if pip_swapped else 'wide'}")
-                    if rtsp_server is not None and key == "c":
-                        capture_pending = True
+                    if key == "c":
+                        capture_frame = wide_camera.read()
+                        if capture_frame is not None:
+                            save_capture(capture_frame, reporter)
 
                     is_locked = tele_loop.track_manager.locked_track_id is not None
                     if recorder is not None and is_locked and not was_locked and not recorder.active:
@@ -384,6 +501,23 @@ def main() -> int:
                         tele_loop.last_num_detections if state == "HANDOFF" else wide_detections
                     )
                     note_state(state, num_detections)
+
+                    now = time.monotonic()
+                    if args.capture_interval and now - last_interval_capture >= args.capture_interval:
+                        capture_frame = wide_camera.read()
+                        if capture_frame is not None:
+                            save_capture(capture_frame, reporter, prefix="auto_interval")
+                        last_interval_capture = now
+                    if (
+                        args.capture_on_detect_interval
+                        and wide_detections > 0
+                        and now - last_detect_capture >= args.capture_on_detect_interval
+                    ):
+                        capture_frame = wide_camera.read()
+                        if capture_frame is not None:
+                            png_path = save_capture(capture_frame, reporter, prefix="auto_detect")
+                            save_yolo_labels(last_wide_detections, last_wide_frame_size, png_path)
+                        last_detect_capture = now
 
                     pan_ticks = tilt_ticks = None
                     if not plain:
