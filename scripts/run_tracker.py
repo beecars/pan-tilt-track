@@ -160,7 +160,25 @@ def main() -> int:
         help=f"auto-save a raw wide-camera PNG to {CAPTURE_DIR}/ at most every N seconds while the wide "
         "camera has a detection, alongside a same-named YOLO-format .txt label file (dataset collection)",
     )
-    parser.add_argument("--model", default=None, help="default: yolo26n.pt, or yolo26n-pose.pt for --mode head")
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="model for both cameras (default: yolo26n.pt, or yolo26n-pose.pt for --mode head); "
+        "--wide-model/--tele-model override it per camera",
+    )
+    parser.add_argument(
+        "--wide-model",
+        default=None,
+        help="wide camera's model, overriding --model. Each camera gets its own detector, so the "
+        "two can be engines exported at different resolutions (see scripts/build_engines.py) -- "
+        "e.g. yolo26n_1440x2560.engine here for pixels on small/distant subjects",
+    )
+    parser.add_argument(
+        "--tele-model",
+        default=None,
+        help="telephoto camera's model, overriding --model. Telephoto paces the control loop, so a "
+        "smaller engine (e.g. yolo26n_544x960.engine) buys loop rate on an already-zoomed view",
+    )
     parser.add_argument(
         "--classes",
         type=int,
@@ -200,6 +218,8 @@ def main() -> int:
         "Raising this trades more nn_inference_ms for more detail on small/distant subjects; "
         "ignored entirely for exported (.engine) models, whose shape is fixed at export time",
     )
+    parser.add_argument("--wide-det-imgsz", type=parse_imgsz, default=None, help="--det-imgsz for the wide camera only")
+    parser.add_argument("--tele-det-imgsz", type=parse_imgsz, default=None, help="--det-imgsz for the telephoto camera only")
     parser.add_argument(
         "--det-conf",
         type=float,
@@ -208,6 +228,8 @@ def main() -> int:
         "to match bytetrack.yaml's track_low_thresh so ByteTrack gets low-confidence boxes for "
         "its second-stage association)",
     )
+    parser.add_argument("--wide-det-conf", type=float, default=None, help="--det-conf for the wide camera only")
+    parser.add_argument("--tele-det-conf", type=float, default=None, help="--det-conf for the telephoto camera only")
     args = parser.parse_args()
     if args.rtsp_pip and not args.rtsp:
         parser.error("--rtsp-pip requires --rtsp")
@@ -224,7 +246,13 @@ def main() -> int:
         print(f"error: {e}", file=sys.stderr)
         return 1
 
-    model_path = args.model or ("yolo26n-pose.pt" if args.mode == "head" else "yolo26n.pt")
+    default_model = args.model or ("yolo26n-pose.pt" if args.mode == "head" else "yolo26n.pt")
+    wide_model = args.wide_model or default_model
+    tele_model = args.tele_model or default_model
+    wide_imgsz = args.wide_det_imgsz if args.wide_det_imgsz is not None else args.det_imgsz
+    tele_imgsz = args.tele_det_imgsz if args.tele_det_imgsz is not None else args.det_imgsz
+    wide_conf = args.wide_det_conf if args.wide_det_conf is not None else args.det_conf
+    tele_conf = args.tele_det_conf if args.tele_det_conf is not None else args.det_conf
     cameras = load_cameras_config(args.camera_config)
     telephoto, wide = cameras.telephoto, cameras.wide
     wide_processing_size = (wide.capture_width, wide.capture_height)
@@ -261,11 +289,19 @@ def main() -> int:
             for y in (0, wide.capture_height)
         )
     )
+
+    def model_summary(model: str, imgsz, conf) -> str:
+        parts = [Path(model).name]
+        if imgsz is not None:
+            parts.append(f"@{imgsz}" if isinstance(imgsz, int) else "@" + "x".join(str(v) for v in imgsz))
+        if conf is not None:
+            parts.append(f" conf={conf}")
+        return "".join(parts)
+
     run_config = {
         "mode": args.mode,
-        "model": model_path,
-        "imgsz": args.det_imgsz or "default",
-        "conf": args.det_conf or "default",
+        "wide": model_summary(wide_model, wide_imgsz, wide_conf),
+        "tele": model_summary(tele_model, tele_imgsz, tele_conf),
         "overlay": "on" if args.overlay else "off",
         "handoff": "off" if args.wide_only else "on",
     }
@@ -357,13 +393,14 @@ def main() -> int:
                     reporter.log(f"[record] saved {finished_clip}")
 
         controller.initialize()
-        detector = YoloDetector(model_path=model_path, classes=classes, imgsz=args.det_imgsz, conf=args.det_conf)
+        wide_detector = YoloDetector(model_path=wide_model, classes=classes, imgsz=wide_imgsz, conf=wide_conf)
+        tele_detector = YoloDetector(model_path=tele_model, classes=classes, imgsz=tele_imgsz, conf=tele_conf)
         wide_track_manager = TrackManager(target_mode=target_mode)
         manual = ManualOverride()
 
         tele_loop = TrackingLoop(
             camera=telephoto_camera,
-            detector=detector,
+            detector=tele_detector,
             controller=controller,
             pan_gain=ProportionalGain(kp=PAN_KP, deadband_px=DEADBAND_PX),
             tilt_gain=ProportionalGain(kp=TILT_KP, deadband_px=DEADBAND_PX),
@@ -376,9 +413,9 @@ def main() -> int:
         )
 
         current_state: str | None = None
-        last_detector_source: str | None = None
         wide_timing: dict[str, float] = {}
         wide_detections = 0
+        wide_needs_reset = False
         last_wide_detections: list[Detection] = []
         last_wide_frame_size = wide_capture_size
 
@@ -392,23 +429,17 @@ def main() -> int:
             """Wide-driven coarse positioning: only called when telephoto
             currently has no lock of its own. Returns wide's selected
             target (or None), steering toward it first if found."""
-            nonlocal last_detector_source, wide_timing, wide_detections, last_wide_detections, last_wide_frame_size
-            # Detection runs on the frame at its native capture resolution --
-            # Ultralytics letterboxes to whatever the model/engine needs
-            # internally regardless of input size, so there's no need to
-            # pre-resize. Target coordinates are rescaled to
-            # wide_processing_size (wide_handoff's calibration resolution)
-            # below, rather than resizing the image itself.
+            nonlocal wide_timing, wide_detections, wide_needs_reset, last_wide_detections, last_wide_frame_size
             wide_frame = wide_camera.read()
             if wide_frame is None:
                 return None
-            detections = detector.track(wide_frame, reset=last_detector_source != "wide")
-            last_detector_source = "wide"
+            detections = wide_detector.track(wide_frame, reset=wide_needs_reset)
+            wide_needs_reset = False
             wide_detections = len(detections)
             last_wide_detections = detections
             frame_h, frame_w = wide_frame.shape[:2]
             last_wide_frame_size = (frame_w, frame_h)
-            wide_timing = detector.last_timing
+            wide_timing = wide_detector.last_timing
             target = wide_track_manager.update(detections, (frame_w / 2, frame_h / 2))
             if target is None:
                 if args.verbose:
@@ -456,25 +487,32 @@ def main() -> int:
             with NonBlockingKeyReader() as keys:
                 while True:
                     is_locked = tele_loop.track_manager.locked_track_id is not None
+                    wide_ran = tele_ran = False
 
                     if manual.enabled:
                         ok = tele_loop.step(detect=False)
                         state = "MANUAL"
                     elif is_locked:
-                        ok = tele_loop.step(detect=True, reset=last_detector_source != "tele")
-                        last_detector_source = "tele"
+                        ok = tele_loop.step(detect=True)
+                        tele_ran = True
                         state = "HANDOFF"
                     else:
                         wide_target = run_acquisition_step()
+                        wide_ran = True
                         if wide_target is not None and not args.wide_only:
-                            ok = tele_loop.step(detect=True, reset=last_detector_source != "tele")
-                            last_detector_source = "tele"
+                            ok = tele_loop.step(detect=True)
+                            tele_ran = True
                             is_locked = tele_loop.track_manager.locked_track_id is not None
                         else:
                             ok = tele_loop.step(detect=False)
                         state = "HANDOFF" if is_locked else "ACQUIRE"
                     if not ok:
                         break
+
+                    if not wide_ran:
+                        wide_timing = {}
+                        wide_detections = 0
+                        wide_needs_reset = True
 
                     key = keys.read_key()
                     manual.handle_key(key, controller)
@@ -526,7 +564,8 @@ def main() -> int:
                     locked_target = tele_loop.last_target if state == "HANDOFF" else None
                     reporter.update(
                         state=state,
-                        detect_source=last_detector_source,
+                        wide_active=wide_ran,
+                        tele_active=tele_ran,
                         wide_timing=wide_timing,
                         wide_detections=wide_detections,
                         tele_timing=tele_loop.last_detect_timing,

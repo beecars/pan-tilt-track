@@ -111,18 +111,37 @@ confirmed working from inside the container.
 
 Base image: `nvcr.io/nvidia/l4t-jetpack:r36.4.0`.
 
-### TensorRT engine (optional)
+### TensorRT engines (optional)
 
 `--model` accepts a `.engine` file, so `YoloDetector` is TensorRT-compatible
-out of the box. Exporting one is left up to the user (`yolo export
-model=yolo26n.pt format=engine imgsz=H,W device=0`, run on-device since
-engines aren't portable across hardware/JetPack/TensorRT versions) -- match
-`imgsz` to the camera's aspect ratio rather than a plain square value, and
-raise `--det-conf` alongside a higher imgsz to compensate for the extra
-low-confidence detections that come with it.
+out of the box. Each camera gets its own detector, so `--wide-model` and
+`--tele-model` can point at engines exported at *different* resolutions --
+which is the point, since an engine's `imgsz` is fixed at export time and the
+two cameras want opposite things. Wide is hunting small/distant subjects across
+the whole field and wants pixels; telephoto is already zoomed in and paces the
+control loop, so a smaller engine there buys loop rate.
+
+`scripts/build_engines.py` exports the set. Engines aren't portable across
+hardware/JetPack/TensorRT versions, so it has to run on-device:
 
 ```bash
-./scripts/docker-run.sh python scripts/run_tracker.py --model yolo26n.engine --det-conf 0.45
+./scripts/docker-run.sh python scripts/build_engines.py
+```
+
+| Role | imgsz (H,W) | File |
+| --- | --- | --- |
+| wide | `1440,2560` | `yolo26n_1440x2560.engine` |
+| tele | `544,960` | `yolo26n_544x960.engine` |
+| tele | `384,640` | `yolo26n_384x640.engine` |
+
+All three are rect 16:9 (stride-32 multiples) rather than square, so no tensor
+is wasted on letterbox padding. `--sizes 384x640` builds just one.
+
+```bash
+./scripts/docker-run.sh python scripts/run_tracker.py \
+  --wide-model yolo26n_1440x2560.engine --wide-det-conf 0.45 \
+  --tele-model yolo26n_544x960.engine   --tele-det-conf 0.35 \
+  --wide-capture-width 3840 --wide-capture-height 2160 --wide-capture-framerate 30
 ```
 
 ## Enclosure Design

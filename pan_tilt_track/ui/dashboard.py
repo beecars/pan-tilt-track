@@ -58,16 +58,15 @@ def _stage_box(name: str, value: str, border_style: str, width: int = 12) -> Pan
 def _branch_row(
     label: str, cam: str, timing: dict, count: int, active: bool, downsample: str | None = None
 ) -> Table:
-    """One branch of the fork feeding the single shared YoloDetector:
-    input -> [downsample] -> preprocess -> inference -> postprocess ->
-    tracker. Both wide and tele get their own row, but only one branch is
-    ever actually flowing through the detector at a time -- `active`
-    (this frame's detect_source) picks which row lights up. The inactive
-    row shows blank ("–") stage values rather than stale last-known
-    numbers, so it reads as "not currently running", not as a second
-    pipeline running in parallel. `downsample` (target resolution) adds a
-    DOWN stage after IN when that branch's camera captures at a different
-    resolution than the pipeline processes."""
+    """One camera's detection branch: input -> [downsample] -> preprocess
+    -> inference -> postprocess -> tracker. Each camera has its own
+    detector, so both branches can run in the same frame (wide acquisition
+    probing tele) or just one (tele-only once locked) -- `active` says
+    whether this branch ran. The inactive row shows blank ("–") stage
+    values rather than stale last-known numbers, so it reads as "not
+    currently running". `downsample` (target resolution) adds a DOWN stage
+    after IN when that branch's camera captures at a different resolution
+    than the pipeline processes."""
     def _ms(key: str) -> str:
         if not active:
             return "   – "
@@ -141,11 +140,10 @@ def _badge(label: str, active: bool, active_style: str) -> Text:
 
 
 class LiveDashboard:
-    """Rich Live view: a fork/merge block-diagram of the two camera
-    branches (wide, tele) feeding the one shared YoloDetector -- each
-    branch shows its own last-known stats, with an arrow/highlight on
-    whichever branch is actually flowing through the detector this frame
-    -- current acquire/handoff/manual state, the locked track's ID/
+    """Rich Live view: a block-diagram of the two camera detection
+    branches (wide, tele) -- each branch shows its own last-known stats,
+    with an arrow/highlight on whichever branches ran this frame --
+    current acquire/handoff/manual state, the locked track's ID/
     confidence, pan/tilt position (ticks, degrees, and a bar gauge against
     the joint's configured limits), status badges (recording/RTSP/PIP),
     the active run config, and a rolling log of state transitions /
@@ -174,7 +172,8 @@ class LiveDashboard:
         self._log: deque[str] = deque(maxlen=max_log_lines)
 
         self.state = "STARTING"
-        self.detect_source: str | None = None
+        self.wide_active = False
+        self.tele_active = False
         self.wide_timing: dict = {}
         self.tele_timing: dict = {}
         self.wide_detections = 0
@@ -218,11 +217,11 @@ class LiveDashboard:
         pipeline = Group(
             _branch_row(
                 "WIDE", self.wide_cam, self.wide_timing, self.wide_detections,
-                active=self.detect_source == "wide", downsample=self.wide_downsample,
+                active=self.wide_active, downsample=self.wide_downsample,
             ),
             _branch_row(
                 "TELE", self.tele_cam, self.tele_timing, self.tele_detections,
-                active=self.detect_source == "tele",
+                active=self.tele_active,
             ),
         )
 
@@ -265,7 +264,7 @@ class LiveDashboard:
             line = "  ".join(f"{k}={v}" for k, v in self.run_config.items())
             sections.append(Text(line, style="dim"))
             sections.append(Rule(style="grey50"))
-        sections.append(Text("pipeline (shared detector)", style="dim italic"))
+        sections.append(Text("pipeline (per-camera detectors)", style="dim italic"))
         sections.append(pipeline)
         sections.append(Rule(style="grey50"))
         sections.append(stats)

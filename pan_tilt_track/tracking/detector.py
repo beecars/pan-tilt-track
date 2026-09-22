@@ -109,10 +109,9 @@ class YoloDetector:
 
     def track(self, frame, reset: bool = False) -> list[Detection]:
         """`reset=True` drops ByteTrack's internal track/Kalman state before
-        this call -- required the first time a call is fed frames from a
-        different camera than the previous call, since track_ids aren't
-        namespaced per source and motion state from one camera is invalid
-        for another."""
+        this call -- for when the scene has jumped discontinuously (e.g. the
+        gimbal slewed while this detector was idle) and the previous motion
+        state is no longer valid."""
         t_start = time.perf_counter()
         extra_kwargs = {}
         if self.imgsz is not None:

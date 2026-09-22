@@ -35,14 +35,7 @@ from pan_tilt_track.tracking.detector import YoloDetector
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-# Minimum fraction of the wide frame's width/height that collected samples
-# should span before the fit is trustworthy: a cluster of samples near
-# frame center under-constrains the slope.
 MIN_SPREAD_FRACTION = 0.3
-
-# Live status block redraw rate. Every on_step call updates state, but
-# only every Nth-of-a-second gets flushed to the terminal, so the
-# ~30fps loop doesn't spam the tty.
 RENDER_INTERVAL_S = 0.1
 
 GRID_COLS = 31
@@ -171,12 +164,16 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target-mode", choices=["body", "head"], default="head")
     parser.add_argument("--model", default=None, help="default: yolo26n.pt, or yolo26n-pose.pt for --target-mode head")
+    parser.add_argument("--wide-model", default=None, help="wide camera's model, overriding --model")
+    parser.add_argument("--tele-model", default=None, help="telephoto camera's model, overriding --model")
     parser.add_argument("--camera-config", default=DEFAULT_CAMERA_CONFIG_PATH)
     parser.add_argument("--servo-config", default=DEFAULT_SERVO_CONFIG_PATH)
     parser.add_argument("--min-samples", type=int, default=100)
     parser.add_argument("--out", default=DEFAULT_WIDE_HANDOFF_CONFIG_PATH)
     args = parser.parse_args()
-    model_path = args.model or ("yolo26n-pose.pt" if args.target_mode == "head" else "yolo26n.pt")
+    default_model = args.model or ("yolo26n-pose.pt" if args.target_mode == "head" else "yolo26n.pt")
+    wide_model = args.wide_model or default_model
+    tele_model = args.tele_model or default_model
 
     cameras = load_cameras_config(args.camera_config)
     wide, telephoto = cameras.wide, cameras.telephoto
@@ -199,7 +196,7 @@ def main() -> int:
         flip_method=wide.flip_method,
     ) as wide_camera:
         controller.initialize()
-        wide_detector = YoloDetector(model_path=model_path, classes=[0])  # class 0 = person in COCO
+        wide_detector = YoloDetector(model_path=wide_model, classes=[0])  # class 0 = person in COCO
         display = LiveDisplay(
             wide_w=wide.capture_width, wide_h=wide.capture_height,
             min_samples=args.min_samples, deadband_px=DEADBAND_PX,
@@ -242,7 +239,7 @@ def main() -> int:
                 force=True,
             )
 
-        telephoto_detector = YoloDetector(model_path=model_path, classes=[0])
+        telephoto_detector = YoloDetector(model_path=tele_model, classes=[0])
         loop = TrackingLoop(
             camera=telephoto_camera,
             detector=telephoto_detector,
